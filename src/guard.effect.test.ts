@@ -16,6 +16,8 @@ import type { CommandState, Judgments } from "./types.ts";
 
 const safeJudgments: Judgments = {
   executesDestruction: 0,
+  exposesSensitiveData: 0,
+  weakensSecurityBoundary: 0,
   unrecoverable: 0,
   targetsSharedInfrastructure: 0,
   blastRadius: 0,

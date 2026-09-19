@@ -21,6 +21,14 @@ export type Thresholds = {
    */
   executesDestruction: number;
   /**
+   * Probability of exposing sensitive values at which a command is denied.
+   */
+  denySensitiveDataExposure: number;
+  /**
+   * Probability of weakening a security boundary at which a command is denied.
+   */
+  denySecurityBoundaryWeakening: number;
+  /**
    * Probability of unrecoverable loss at which a command is denied.
    */
   denyUnrecoverable: number;
@@ -68,6 +76,8 @@ export type Thresholds = {
  */
 export const THRESHOLDS: Thresholds = {
   executesDestruction: 0.3,
+  denySensitiveDataExposure: 0.45,
+  denySecurityBoundaryWeakening: 0.45,
   denyUnrecoverable: 0.45,
   denySharedInfrastructure: 0.5,
   denyBlastRadius: 2.0,
@@ -94,10 +104,10 @@ export type PolicyOutcome = {
 /**
  * Turn raw judgments into an action.
  *
- * Order matters. The inert-text gate runs first, so a command that executes
- * nothing is allowed however alarming its text looks. Then each severity signal
- * is checked clear of its band (deny), and only afterwards is anything merely
- * near a threshold escalated to a prompt.
+ * Order matters. Sensitive-data exposure and security-boundary weakening run
+ * before the inert-text gate because a read-only command can still disclose a
+ * secret. Their uncertainty bands also run before that gate. The destructive
+ * severity signals are checked only after the command is known to change state.
  *
  * @param j - Judgments returned for the command
  * @param t - Threshold set to apply; defaults to the shipped values
@@ -107,6 +117,40 @@ export function decide(j: Judgments, t: Thresholds = THRESHOLDS): PolicyOutcome 
   const pct = (n: number) => `${Math.round(n * 100)}%`;
   const band = t.uncertaintyBand;
   const scoreBand = t.uncertaintyBandScore;
+
+  if (j.exposesSensitiveData >= t.denySensitiveDataExposure + band) {
+    return {
+      decision: "deny",
+      reason: `May expose sensitive data such as secrets, credentials, or personal information (${pct(j.exposesSensitiveData)} likelihood). Use a redacted or metadata-only command.`,
+    };
+  }
+
+  if (
+    j.weakensSecurityBoundary >=
+    t.denySecurityBoundaryWeakening + band
+  ) {
+    return {
+      decision: "deny",
+      reason: `May weaken or bypass a security boundary or grant elevated access (${pct(j.weakensSecurityBoundary)} likelihood). Run it yourself if that is intended.`,
+    };
+  }
+
+  if (j.exposesSensitiveData >= t.denySensitiveDataExposure - band) {
+    return {
+      decision: "ask",
+      reason: `Borderline on whether this exposes sensitive values (${pct(j.exposesSensitiveData)}). Confirm that its output and destination are safe.`,
+    };
+  }
+
+  if (
+    j.weakensSecurityBoundary >=
+    t.denySecurityBoundaryWeakening - band
+  ) {
+    return {
+      decision: "ask",
+      reason: `Borderline on whether this weakens a security boundary or grants elevated access (${pct(j.weakensSecurityBoundary)}).`,
+    };
+  }
 
   if (j.executesDestruction < t.executesDestruction - band) {
     return {

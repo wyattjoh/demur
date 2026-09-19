@@ -163,6 +163,12 @@ async function runJudge(
       `  executes destruction    ${judgments.executesDestruction.toFixed(3)}`,
     );
     dependencies.stdout(
+      `  sensitive-data exposure ${judgments.exposesSensitiveData.toFixed(3)}`,
+    );
+    dependencies.stdout(
+      `  weakens security        ${judgments.weakensSecurityBoundary.toFixed(3)}`,
+    );
+    dependencies.stdout(
       `  unrecoverable           ${judgments.unrecoverable.toFixed(3)}`,
     );
     dependencies.stdout(

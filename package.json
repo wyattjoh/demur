@@ -49,6 +49,7 @@
     "build:claude": "bun build src/adapters/claude-code.ts --target=bun --outfile=dist/demur-hook.js --format=esm",
     "build": "bun run build:pi && bun run build:claude",
     "ci": "bun run check && bun run test && bun run build",
+    "eval:synthetic": "bun run eval/run.ts",
     "judge": "bun run src/cli.ts",
     "prepublishOnly": "bun run ci"
   },

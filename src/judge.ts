@@ -153,6 +153,9 @@ export class Judgment extends Context.Service<
           ok: true,
           judgments: {
             executesDestruction: answers.executesDestruction.probability,
+            exposesSensitiveData: answers.exposesSensitiveData.probability,
+            weakensSecurityBoundary:
+              answers.weakensSecurityBoundary.probability,
             unrecoverable: answers.unrecoverable.probability,
             targetsSharedInfrastructure:
               answers.targetsSharedInfrastructure.probability,
