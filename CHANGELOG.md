@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/wyattjoh/demur/compare/v0.3.0...v0.3.1) (2026-09-19)
+
+
+### Bug Fixes
+
+* automate README version updates ([#9](https://github.com/wyattjoh/demur/issues/9)) ([354fb5c](https://github.com/wyattjoh/demur/commit/354fb5c8aca679f02f6271257d4c67d2e5f22878))
+
 ## [0.3.0](https://github.com/wyattjoh/demur/compare/v0.2.0...v0.3.0) (2026-09-19)
 
 
