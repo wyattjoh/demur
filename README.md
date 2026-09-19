@@ -102,8 +102,13 @@ pi install "$PWD"
 
 ### Claude Code
 
-Register the source adapter in `~/.claude/settings.json`, replacing the path
-with the absolute path to your clone:
+Install the published package globally with Bun:
+
+```sh
+bun add --global @wyattjoh/demur
+```
+
+Register its executable in `~/.claude/settings.json`:
 
 ```json
 {
@@ -114,7 +119,7 @@ with the absolute path to your clone:
         "hooks": [
           {
             "type": "command",
-            "command": "bun /absolute/path/to/demur/src/adapters/claude-code.ts"
+            "command": "demur-claude-hook"
           }
         ]
       }
