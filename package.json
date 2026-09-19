@@ -1,13 +1,12 @@
 {
-  "name": "demur",
+  "name": "@wyattjoh/demur",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "description": "A proof-of-concept destructive-command guard for coding agents.",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/wyattjoh/demur.git"
+    "url": "git+https://github.com/wyattjoh/demur.git"
   },
   "bugs": {
     "url": "https://github.com/wyattjoh/demur/issues"
@@ -18,6 +17,23 @@
     "pi-package",
     "security"
   ],
+  "files": [
+    "extensions/demur/index.ts",
+    "src/adapters/claude-code.ts",
+    "src/analyze.ts",
+    "src/cli.ts",
+    "src/guard.internal.ts",
+    "src/guard.ts",
+    "src/judge.ts",
+    "src/key.ts",
+    "src/policy.ts",
+    "src/questions.ts",
+    "src/state.ts",
+    "src/types.ts"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "packageManager": "bun@1.4.2",
   "engines": {
     "bun": ">=1.4.0"
@@ -29,7 +45,8 @@
     "build:claude": "bun build src/adapters/claude-code.ts --target=bun --outfile=dist/demur-hook.js --format=esm",
     "build": "bun run build:pi && bun run build:claude",
     "ci": "bun run check && bun run test && bun run build",
-    "judge": "bun run src/cli.ts"
+    "judge": "bun run src/cli.ts",
+    "prepublishOnly": "bun run ci"
   },
   "pi": {
     "extensions": [

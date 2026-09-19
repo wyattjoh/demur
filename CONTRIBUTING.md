@@ -55,5 +55,9 @@ Do not open a public issue for a suspected vulnerability. Follow
 ## Pull requests
 
 Keep each pull request focused. Explain what changed, why it is safe, and which
-failure paths were tested. By contributing, you agree that your contribution is
-licensed under the project's MIT License.
+failure paths were tested. Use Conventional Commit titles so release-please can
+classify changes. By contributing, you agree that your contribution is licensed
+under the project's MIT License.
+
+Maintainers should follow [RELEASING.md](RELEASING.md) for npm and GitHub
+releases.

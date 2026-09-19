@@ -55,14 +55,6 @@ shell arguments when the guard is active.
 
 ## Install
 
-Clone the repository and install its dependencies:
-
-```sh
-git clone https://github.com/wyattjoh/demur.git
-cd demur
-bun install --frozen-lockfile
-```
-
 Export the API key before launching the host agent. You can use your shell,
 `.env.local` with a compatible environment loader, or any secret manager:
 
@@ -75,16 +67,16 @@ configuration, and local environment files are ignored by Git.
 
 ### Pi
 
-For a local checkout:
+Install the npm package:
 
 ```sh
-pi install /absolute/path/to/demur
+pi install npm:@wyattjoh/demur
 ```
 
-After a release is tagged, install the pinned Git package:
+Pin a specific release when reproducibility matters:
 
 ```sh
-pi install git:github.com/wyattjoh/demur@v0.1.0
+pi install npm:@wyattjoh/demur@0.1.0
 ```
 
 Launch Pi from an environment that already contains `TYPESAFE_API_KEY`:
@@ -98,6 +90,15 @@ confirmation dialog; without an interactive UI, demur blocks the command.
 
 Pi packages execute with the user's full system permissions. Review this
 repository before installing it.
+
+For development, clone the repository and install it by local path:
+
+```sh
+git clone https://github.com/wyattjoh/demur.git
+cd demur
+bun install --frozen-lockfile
+pi install "$PWD"
+```
 
 ### Claude Code
 
@@ -190,7 +191,8 @@ bun run build
 
 All three checks run together with `bun run ci`.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) before proposing changes. Report security
+See [CONTRIBUTING.md](CONTRIBUTING.md) before proposing changes and
+[RELEASING.md](RELEASING.md) for the automated release process. Report security
 issues through [SECURITY.md](SECURITY.md), not a public issue.
 
 ## License

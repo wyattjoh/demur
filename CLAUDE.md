@@ -32,6 +32,19 @@ environment value should fall back to a default.
 - Explicit `| undefined` over `?` optional markers.
 - Multi-line JSDoc on every exported type and function.
 - Keep README data-disclosure fields synchronized with `renderState()` in `src/state.ts`.
+- Run the complete quality gate with `bun run ci` before publishing.
+
+## Releases
+
+The npm package is `@wyattjoh/demur`. release-please owns version bumps,
+`CHANGELOG.md`, tags, and GitHub releases after the manual `0.1.0` bootstrap.
+Follow `RELEASING.md`; do not hand-edit release versions or tags during normal
+operation.
+
+The release workflow must keep npm publishing in the same workflow as
+release-please because events created by `GITHUB_TOKEN` do not trigger separate
+workflows. Publishing uses npm Trusted Publishing with OIDC, never a long-lived
+npm token.
 
 ## Guard invariants
 
