@@ -90,9 +90,11 @@ pi install npm:@wyattjoh/demur
 
 Pin a specific release when reproducibility matters:
 
+<!-- x-release-please-start-version -->
 ```sh
-pi install npm:@wyattjoh/demur@0.3.1 # x-release-please-version
+pi install npm:@wyattjoh/demur@0.3.1
 ```
+<!-- x-release-please-end -->
 
 Launch Pi normally after configuring the credential:
 
