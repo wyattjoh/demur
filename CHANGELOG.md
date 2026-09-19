@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/wyattjoh/demur/compare/v0.3.1...v0.3.2) (2026-09-19)
+
+
+### Bug Fixes
+
+* **pi:** run guard through Bun worker ([#13](https://github.com/wyattjoh/demur/issues/13)) ([4bcee79](https://github.com/wyattjoh/demur/commit/4bcee7946a4479561ddbdc151c08c27864579223))
+
 ## [0.3.1](https://github.com/wyattjoh/demur/compare/v0.3.0...v0.3.1) (2026-09-19)
 
 
