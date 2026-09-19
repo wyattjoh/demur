@@ -12,7 +12,8 @@ System One. Read README.md for setup, data disclosure, and limitations.
 - `src/key.ts` — environment precedence and `Bun.secrets` credential storage.
 - `src/guard.internal.ts` — Effect-native orchestration and fail-closed posture.
 - `src/guard.ts` — managed runtime and Promise compatibility boundary.
-- `extensions/demur/` — Pi extension (`tool_call`).
+- `extensions/demur/` — Node-compatible Pi extension and atomic global cost tracker.
+- `src/adapters/pi-worker.ts` — Bun guard worker launched by the Pi extension.
 - `src/adapters/claude-code.ts` — Claude Code `PreToolUse` hook.
 - `eval/` — synthetic contrast corpus, pure scoring, and live runner.
 

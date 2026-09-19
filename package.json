@@ -22,8 +22,10 @@
     "security"
   ],
   "files": [
+    "extensions/demur/cost-tracker.ts",
     "extensions/demur/index.ts",
     "src/adapters/claude-code.ts",
+    "src/adapters/pi-worker.ts",
     "src/analyze.ts",
     "src/cli.ts",
     "src/guard.internal.ts",
@@ -45,7 +47,7 @@
   "scripts": {
     "check": "tsc --noEmit",
     "test": "vitest run",
-    "build:pi": "bun build extensions/demur/index.ts --target=bun --outfile=dist/demur-guard.ts --format=esm --external @earendil-works/pi-coding-agent",
+    "build:pi": "bun build extensions/demur/index.ts --target=node --outfile=dist/demur-guard.js --format=esm --external @earendil-works/pi-coding-agent && bun build src/adapters/pi-worker.ts --target=bun --outfile=dist/demur-pi-worker.js --format=esm",
     "build:claude": "bun build src/adapters/claude-code.ts --target=bun --outfile=dist/demur-hook.js --format=esm",
     "build": "bun run build:pi && bun run build:claude",
     "ci": "bun run check && bun run test && bun run build",
