@@ -1,0 +1,13 @@
+node_modules/
+dist/
+coverage/
+.scratch/
+.pi/
+*.log
+*.tgz
+.DS_Store
+
+# Local environment and secret files; keep only the schema.
+.env
+.env.*
+!.env.schema

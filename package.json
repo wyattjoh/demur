@@ -1,0 +1,53 @@
+{
+  "name": "demur",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A proof-of-concept destructive-command guard for coding agents.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wyattjoh/demur.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wyattjoh/demur/issues"
+  },
+  "homepage": "https://github.com/wyattjoh/demur#readme",
+  "keywords": [
+    "coding-agent",
+    "pi-package",
+    "security"
+  ],
+  "packageManager": "bun@1.4.2",
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "build:pi": "bun build extensions/demur/index.ts --target=bun --outfile=dist/demur-guard.ts --format=esm --external @earendil-works/pi-coding-agent",
+    "build:claude": "bun build src/adapters/claude-code.ts --target=bun --outfile=dist/demur-hook.js --format=esm",
+    "build": "bun run build:pi && bun run build:claude",
+    "ci": "bun run check && bun run test && bun run build",
+    "judge": "bun run src/cli.ts"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  },
+  "dependencies": {
+    "@effect/ai-typesafe": "4.0.0-rc.116",
+    "effect": "4.0.0-rc.116"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.85.1",
+    "@effect/vitest": "4.0.0-rc.116",
+    "@types/bun": "1.4.2",
+    "typescript": "5.9.3",
+    "vitest": "5.0.1"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
