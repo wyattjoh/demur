@@ -90,6 +90,14 @@ export type Judgments = {
    */
   executesDestruction: number;
   /**
+   * Probability the command reveals or transmits sensitive values.
+   */
+  exposesSensitiveData: number;
+  /**
+   * Probability the command weakens a security boundary or grants elevated access.
+   */
+  weakensSecurityBoundary: number;
+  /**
    * Probability that what it destroys cannot be recovered.
    */
   unrecoverable: number;

@@ -14,5 +14,5 @@
     "noImplicitOverride": true,
     "skipLibCheck": true
   },
-  "include": ["src", "extensions"]
+  "include": ["src", "extensions", "eval"]
 }

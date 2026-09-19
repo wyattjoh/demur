@@ -1,22 +1,24 @@
 # demur
 
-A proof-of-concept destructive-command guard for coding agents. demur sends a
-shell command and limited execution context to TypeSafe System One, then turns
-four model judgments into an `allow`, `ask`, or `deny` decision.
+A proof-of-concept harmful-command guard for coding agents. demur sends a shell
+command and limited execution context to TypeSafe System One, then turns six
+model judgments into an `allow`, `ask`, or `deny` decision.
 
 > [!WARNING]
 > demur is experimental and is not a security boundary. A model can
 > misclassify, behave nondeterministically, or be influenced by attacker-controlled
 > command text. Use it as an additional confirmation layer, not as your only
-> protection against destructive commands.
+> protection against harmful commands.
 
 ## How it works
 
 For each agent-initiated Bash tool call, demur:
 
 1. Collects the command, working directory, host name, and bounded Git facts.
-2. Requests four judgments in one TypeSafe System One call:
+2. Requests six judgments in one TypeSafe System One call:
    - whether the command executes a destructive operation;
+   - whether it exposes secrets, credentials, or personal data;
+   - whether it weakens a security boundary or grants elevated access;
    - whether its effects are recoverable;
    - whether it targets shared infrastructure; and
    - its expected blast radius.
@@ -192,7 +194,7 @@ and deterministic policy controls alongside demur.
 
 ## Project layout
 
-- `src/questions.ts` — the four model judgments
+- `src/questions.ts` — the six model judgments
 - `src/policy.ts` — thresholds and `allow` / `ask` / `deny` composition
 - `src/analyze.ts` — deterministic shell analysis for the static uncertainty gate
 - `src/state.ts` — bounded environment and Git context collection
@@ -201,6 +203,32 @@ and deterministic policy controls alongside demur.
 - `src/guard.ts` — managed runtime and Promise boundary
 - `extensions/demur/` — Pi `tool_call` integration
 - `src/adapters/claude-code.ts` — Claude Code `PreToolUse` integration
+- `eval/` — safe synthetic contrast cases and the live evaluation runner
+
+## Synthetic evaluation
+
+The synthetic evaluation measures whether the two policy-qualification questions
+separate clear positive and negative cases, then verifies that active hazards
+produce a policy denial. Its 60 commands are hand-authored fixture strings with
+synthetic names and no secret values. **The runner never executes a candidate
+command.** It only sends each string and fixed synthetic context to TypeSafe.
+
+Run one sample per case:
+
+```sh
+bun run eval:synthetic
+```
+
+Repeat each case (up to 10 samples) to expose model instability:
+
+```sh
+bun run eval:synthetic --runs=3
+```
+
+The command prints each case's expected and observed classification, exits
+nonzero on a miss or provider failure, and writes full evidence to
+`.scratch/synthetic-eval.json`. Repeated runs make additional provider calls and
+may incur cost, so the live evaluation is deliberately not part of `bun run ci`.
 
 ## Development
 

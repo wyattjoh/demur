@@ -1,11 +1,11 @@
 # demur
 
-A proof-of-concept destructive-command guard that judges commands with TypeSafe
+A proof-of-concept harmful-command guard that judges commands with TypeSafe
 System One. Read README.md for setup, data disclosure, and limitations.
 
 ## Layout
 
-- `src/questions.ts` — the four judgments. **The highest-leverage file here.**
+- `src/questions.ts` — the six judgments. **The highest-leverage file here.**
 - `src/policy.ts` — thresholds and the allow/ask/deny composition.
 - `src/analyze.ts` — deterministic shell analysis for the static uncertainty gate.
 - `src/state.ts` — Effect services for environment and Git context gathering.
@@ -14,6 +14,7 @@ System One. Read README.md for setup, data disclosure, and limitations.
 - `src/guard.ts` — managed runtime and Promise compatibility boundary.
 - `extensions/demur/` — Pi extension (`tool_call`).
 - `src/adapters/claude-code.ts` — Claude Code `PreToolUse` hook.
+- `eval/` — synthetic contrast corpus, pure scoring, and live runner.
 
 ## Credentials
 
@@ -63,6 +64,10 @@ against independently licensed fixtures.
 used by policy, not included in the model request. The model judges the original
 command while code handles facts that can be resolved reliably.
 
+**Do not infer authorization.** The originating user request is not part of the
+model state. Questions must judge the command's objective effects, not whether
+those effects were requested or permitted.
+
 **Preserve fail-closed behavior.** Missing credentials, timeouts, malformed
 responses, and unexpected errors deny the command. Only the explicit
 `DEMUR_DISABLE` kill switch may bypass judgment.
@@ -86,3 +91,9 @@ cannot make branches unreachable.
 Only add fixtures and benchmark data with clear redistribution and evaluation
 rights. Record their provenance and license. Do not copy third-party corpora into
 this repository without explicit review.
+
+Synthetic cases must use invented names and contain no real credentials or
+personal data. Candidate commands are fixture strings: the eval runner may send
+them to the judgment model but must never execute them. Keep live provider calls
+out of `bun run ci`; use `bun run eval:synthetic` explicitly when measuring
+question changes.
