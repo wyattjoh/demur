@@ -6,7 +6,11 @@ import {
   JudgmentError,
   type JudgeSuccess,
 } from "./judge.ts";
-import { Environment } from "./key.ts";
+import {
+  Environment,
+  SecretStoreError,
+  TypeSafeApiKey,
+} from "./key.ts";
 import { gatherStateEffect, GitCommand } from "./state.ts";
 import type { CommandState, Judgments } from "./types.ts";
 
@@ -58,6 +62,23 @@ const judgmentLayer = (
       ) {
         return yield* result;
       }),
+    }),
+  );
+
+const apiKeyLayer = (
+  resolved: Effect.Effect<
+    { value: string; source: "environment" | "system" } | undefined,
+    SecretStoreError
+  >,
+) =>
+  Layer.succeed(
+    TypeSafeApiKey,
+    TypeSafeApiKey.of({
+      resolve: resolved,
+      store: Effect.fn("TestTypeSafeApiKey.store")(function* (
+        _value: string,
+      ) {}),
+      remove: Effect.succeed(false),
     }),
   );
 
@@ -130,6 +151,36 @@ describe("Effect guard", () => {
         judgmentLayer(
           Effect.fail(
             new JudgmentError({ failure: "timeout", detail: "timed out" }),
+          ),
+        ),
+        { local: true },
+      ),
+    ),
+  );
+
+  it.effect("fails closed when the credential store cannot be read", () =>
+    Effect.gen(function* () {
+      const verdict = yield* judgeStateEffect(state);
+
+      assert.strictEqual(verdict.decision, "deny");
+      assert.strictEqual(verdict.failure, "credential-error");
+      assert.include(verdict.reason, "credential store");
+      assert.include(verdict.reason, "keychain locked");
+    }).pipe(
+      Effect.provide(
+        Judgment.layerNoDeps.pipe(
+          Layer.provide(
+            Layer.merge(
+              environmentLayer({}),
+              apiKeyLayer(
+                Effect.fail(
+                  new SecretStoreError({
+                    operation: "read",
+                    detail: "keychain locked",
+                  }),
+                ),
+              ),
+            ),
           ),
         ),
         { local: true },

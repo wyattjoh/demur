@@ -12,7 +12,11 @@ import {
 } from "effect";
 import { AiError, DecisionModel } from "effect/unstable/ai";
 import { FetchHttpClient } from "effect/unstable/http";
-import { Environment, MISSING_KEY_HELP } from "./key.ts";
+import {
+  Environment,
+  MISSING_KEY_HELP,
+  TypeSafeApiKey,
+} from "./key.ts";
 import { COMMAND_JUDGMENTS } from "./questions.ts";
 import { renderState } from "./state.ts";
 import type { CommandState, FailureKind, Judgments } from "./types.ts";
@@ -71,6 +75,7 @@ export class JudgmentError extends Schema.TaggedError<JudgmentError>()(
   {
     failure: Schema.Literals([
       "no-api-key",
+      "credential-error",
       "timeout",
       "api-error",
       "unexpected",
@@ -92,6 +97,7 @@ export class Judgment extends Context.Service<
     Judgment,
     Effect.gen(function* () {
       const environment = yield* Environment;
+      const apiKey = yield* TypeSafeApiKey;
       let decisionLayer: ReturnType<typeof makeDecisionModelLayer> | undefined;
       let timeoutMs = DEFAULT_TIMEOUT_MS;
 
@@ -102,9 +108,16 @@ export class Judgment extends Context.Service<
         > {
           if (decisionLayer !== undefined) return decisionLayer;
 
-          const apiKey =
-            (yield* environment.get("TYPESAFE_API_KEY"))?.trim() || undefined;
-          if (apiKey === undefined) {
+          const resolvedApiKey = yield* apiKey.resolve.pipe(
+            Effect.mapError(
+              (error) =>
+                new JudgmentError({
+                  failure: "credential-error",
+                  detail: `Unable to read the operating system credential store: ${error.detail}`,
+                }),
+            ),
+          );
+          if (resolvedApiKey === undefined) {
             return yield* new JudgmentError({
               failure: "no-api-key",
               detail: MISSING_KEY_HELP,
@@ -115,7 +128,7 @@ export class Judgment extends Context.Service<
             yield* environment.get("DEMUR_TIMEOUT_MS"),
           );
           timeoutMs = configuredTimeout || DEFAULT_TIMEOUT_MS;
-          decisionLayer = makeDecisionModelLayer(apiKey);
+          decisionLayer = makeDecisionModelLayer(resolvedApiKey.value);
           return decisionLayer;
         },
       );
@@ -158,7 +171,7 @@ export class Judgment extends Context.Service<
   );
 
   static readonly layer = this.layerNoDeps.pipe(
-    Layer.provide(Environment.layer),
+    Layer.provide(Layer.merge(Environment.layer, TypeSafeApiKey.layer)),
   );
 }
 

@@ -9,6 +9,7 @@ System One. Read README.md for setup, data disclosure, and limitations.
 - `src/policy.ts` — thresholds and the allow/ask/deny composition.
 - `src/analyze.ts` — deterministic shell analysis for the static uncertainty gate.
 - `src/state.ts` — Effect services for environment and Git context gathering.
+- `src/key.ts` — environment precedence and `Bun.secrets` credential storage.
 - `src/guard.internal.ts` — Effect-native orchestration and fail-closed posture.
 - `src/guard.ts` — managed runtime and Promise compatibility boundary.
 - `extensions/demur/` — Pi extension (`tool_call`).
@@ -16,12 +17,15 @@ System One. Read README.md for setup, data disclosure, and limitations.
 
 ## Credentials
 
-`TYPESAFE_API_KEY` must already exist in the host process environment. demur
-must not fetch or persist credentials. Users may export it directly or inject it
-with a secret manager before launching Pi or Claude Code.
+`TYPESAFE_API_KEY` is the highest-priority credential source for automation and
+one-off overrides. Otherwise, demur reads the TypeSafe API key from the
+operating system credential store through `Bun.secrets`; users manage that item
+with `demur auth login|status|logout`.
 
-Declare configuration in `.env.schema`. Use `||` rather than `??` when an empty
-environment value should fall back to a default.
+Keep environment and credential-store access behind Effect services. Never log,
+print, or send the API key anywhere except the TypeSafe client. Declare
+environment configuration in `.env.schema`. Use `||` rather than `??` when an
+empty environment value should fall back to a default.
 
 ## Conventions
 

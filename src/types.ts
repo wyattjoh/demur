@@ -117,6 +117,7 @@ export type Decision = "allow" | "ask" | "deny";
  */
 export type FailureKind =
   | "no-api-key"
+  | "credential-error"
   | "timeout"
   | "api-error"
   | "unexpected";

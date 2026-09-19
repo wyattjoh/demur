@@ -55,15 +55,28 @@ shell arguments when the guard is active.
 
 ## Install
 
-Export the API key before launching the host agent. You can use your shell,
-`.env.local` with a compatible environment loader, or any secret manager:
+Install demur's command-line tools and save your TypeSafe API key in the
+operating system credential store:
+
+```sh
+bun add --global @wyattjoh/demur
+demur auth login
+demur auth status
+```
+
+`Bun.secrets` stores the credential in macOS Keychain, Linux Secret Service, or
+Windows Credential Manager. The operating system may request access when the
+credential is first used or while its credential store is locked.
+
+For automation or a one-off override, set `TYPESAFE_API_KEY` before launching
+the host agent. An environment value takes precedence over the stored key:
 
 ```sh
 export TYPESAFE_API_KEY="..."
 ```
 
 Never commit the key. [`.env.schema`](.env.schema) documents the accepted
-configuration, and local environment files are ignored by Git.
+environment configuration, and local environment files are ignored by Git.
 
 ### Pi
 
@@ -76,10 +89,10 @@ pi install npm:@wyattjoh/demur
 Pin a specific release when reproducibility matters:
 
 ```sh
-pi install npm:@wyattjoh/demur@0.1.0
+pi install npm:@wyattjoh/demur@0.1.1
 ```
 
-Launch Pi from an environment that already contains `TYPESAFE_API_KEY`:
+Launch Pi normally after configuring the credential:
 
 ```sh
 pi
@@ -102,12 +115,7 @@ pi install "$PWD"
 
 ### Claude Code
 
-Install the published package globally with Bun:
-
-```sh
-bun add --global @wyattjoh/demur
-```
-
+The global package installation above also provides the Claude Code hook.
 Register its executable in `~/.claude/settings.json`:
 
 ```json
@@ -128,37 +136,45 @@ Register its executable in `~/.claude/settings.json`:
 }
 ```
 
-Launch Claude Code from an environment that already contains
-`TYPESAFE_API_KEY`. The adapter emits Claude Code's
-`hookSpecificOutput.permissionDecision` response.
+Launch Claude Code normally after configuring the credential. The adapter emits
+Claude Code's `hookSpecificOutput.permissionDecision` response.
 
 ### CLI
 
-Judge a single command without installing a host integration:
+Manage the stored credential or judge a single command without a host
+integration:
 
 ```sh
-bun run judge "git reset --hard HEAD~3"
+demur auth login
+demur auth status
+demur auth logout
+demur judge "git reset --hard HEAD~3"
 ```
+
+From a development checkout, `bun run judge "<command>"` remains available.
 
 ## Configuration
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `TYPESAFE_API_KEY` | required | TypeSafe API credential. Missing keys fail closed. |
+| `TYPESAFE_API_KEY` | stored credential | Optional TypeSafe API credential override. Missing keys fail closed. |
 | `DEMUR_TIMEOUT_MS` | `4000` | Per-attempt model timeout in milliseconds. |
 | `DEMUR_DISABLE` | unset | Emergency bypass. `1` or `true` allows every command. |
 
 ## Failure posture
 
-demur fails closed. A missing key, timeout, API failure, malformed response, or
-unexpected guard error returns `deny` with a reason that identifies the guard
-failure rather than presenting it as a policy judgment.
+demur fails closed. A missing key, credential-store failure, timeout, API
+failure, malformed response, or unexpected guard error returns `deny` with a
+reason that identifies the guard failure rather than presenting it as a policy
+judgment.
 
 `DEMUR_DISABLE=1` is an explicit emergency bypass. It disables all protection
 and should remain unset during normal use.
 
 ## Known limitations
 
+- `Bun.secrets` is experimental, and credential-store availability and prompts
+  vary by operating system configuration.
 - Model decisions are probabilistic and may vary between identical requests.
 - The hard-coded `jev-latest` model alias may change without a demur release.
 - Attacker-controlled command text can influence the model.
@@ -180,6 +196,7 @@ and deterministic policy controls alongside demur.
 - `src/policy.ts` — thresholds and `allow` / `ask` / `deny` composition
 - `src/analyze.ts` — deterministic shell analysis for the static uncertainty gate
 - `src/state.ts` — bounded environment and Git context collection
+- `src/key.ts` — environment precedence and operating-system credential storage
 - `src/guard.internal.ts` — Effect-native orchestration and fail-closed recovery
 - `src/guard.ts` — managed runtime and Promise boundary
 - `extensions/demur/` — Pi `tool_call` integration

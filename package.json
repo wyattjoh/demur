@@ -13,7 +13,8 @@
   },
   "homepage": "https://github.com/wyattjoh/demur#readme",
   "bin": {
-    "demur-claude-hook": "./src/adapters/claude-code.ts"
+    "demur": "src/cli.ts",
+    "demur-claude-hook": "src/adapters/claude-code.ts"
   },
   "keywords": [
     "coding-agent",
