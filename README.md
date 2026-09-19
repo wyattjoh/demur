@@ -102,8 +102,27 @@ Launch Pi normally after configuring the credential:
 pi
 ```
 
-The extension intercepts `bash` tool calls. `ask` opens an interactive
-confirmation dialog; without an interactive UI, demur blocks the command.
+The extension intercepts `bash` tool calls. Because Pi runs extensions under
+Node.js while demur uses `Bun.secrets`, the extension launches a package-local
+Bun worker for each judgment. The API key remains inside that worker; only the
+command request and resulting verdict cross its local stdio pipes. `ask` opens
+an interactive confirmation dialog; without an interactive UI, demur blocks the
+command.
+
+After each run, Pi's interactive UI prints the decision, submitted input-token
+count, the run's estimated input cost, the accumulated global estimate, and the
+wall-clock evaluation time in human-readable units. The
+estimate uses TypeSafe's published Jev price of
+[$0.042 per million input tokens](https://typesafe.ai/blog/introducing-system-one-models-and-jev);
+it is informational rather than an authoritative billing amount. Failure and
+bypass paths that do not call Jev report that cost is unavailable.
+
+The accumulated estimate is stored at `$XDG_STATE_HOME/demur/usage.json`, or
+`~/.local/state/demur/usage.json` when `XDG_STATE_HOME` is unset. A lock
+serializes concurrent Pi instances, and each update is written to a temporary
+file before an atomic rename so the total cannot be partially written or lose a
+concurrent increment. Cost-accounting failures do not change demur's guard
+decision; the status reports `accumulated unavailable` instead.
 
 Pi packages execute with the user's full system permissions. Review this
 repository before installing it.
