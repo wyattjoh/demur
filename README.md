@@ -109,6 +109,24 @@ command request and resulting verdict cross its local stdio pipes. `ask` opens
 an interactive confirmation dialog; without an interactive UI, demur blocks the
 command.
 
+Use `/demur` to open the extension menu. It can enable or disable demur and
+change what Pi does when demur cannot obtain a trustworthy judgment because of
+a missing credential, timeout, API error, malformed worker response, or
+unexpected guard failure:
+
+- `block` (default) fails closed.
+- `ask` requests interactive confirmation and blocks when no UI is available.
+- `allow` fails open without confirmation.
+
+Disabling demur bypasses the worker and allows Bash calls without judgment. Pi's
+bottom status bar always shows `demur: enabled` or `demur: disabled` so this
+bypass remains visible.
+
+Both settings are stored globally at `$XDG_CONFIG_HOME/demur/config.json`, or
+`~/.config/demur/config.json` when `XDG_CONFIG_HOME` is unset, and apply to
+future Pi sessions. While demur is enabled, the failure policy never changes a
+completed `deny` policy judgment; those commands remain blocked.
+
 After each run, Pi's interactive UI prints the decision, submitted input-token
 count, the run's estimated input cost, the accumulated global estimate, and the
 wall-clock evaluation time in human-readable units. The
@@ -186,13 +204,20 @@ From a development checkout, `bun run judge "<command>"` remains available.
 
 ## Failure posture
 
-demur fails closed. A missing key, credential-store failure, timeout, API
-failure, malformed response, or unexpected guard error returns `deny` with a
-reason that identifies the guard failure rather than presenting it as a policy
-judgment.
+demur's core guard fails closed. A missing key, credential-store failure,
+timeout, API failure, malformed response, or unexpected guard error returns
+`deny` with a reason that identifies the guard failure rather than presenting it
+as a policy judgment. The Claude Code adapter and CLI preserve that verdict.
 
-`DEMUR_DISABLE=1` is an explicit emergency bypass. It disables all protection
-and should remain unset during normal use.
+The Pi extension defaults to enabled with the same fail-closed behavior, but
+its explicit `/demur` menu can globally change how Pi handles guard failures or
+disable the extension entirely. The failure-policy override applies only when
+no trustworthy judgment was produced; it cannot loosen a completed policy
+denial while demur is enabled. The bottom status bar makes the enabled state
+visible.
+
+`DEMUR_DISABLE=1` remains the cross-host emergency bypass. It disables judgment
+and protection entirely and should remain unset during normal use.
 
 ## Known limitations
 
@@ -203,7 +228,8 @@ and should remain unset during normal use.
 - Attacker-controlled command text can influence the model.
 - Shell expansion, obfuscation, aliases, wrappers, and runtime environment can
   make a command behave differently from its text.
-- Network outages block commands unless the emergency bypass is enabled.
+- Network outages block commands by default; Pi can override that failure
+  handling from the `/demur` menu.
 - Every decision adds remote-call latency and may incur provider cost.
 - The integrations guard agent-issued Bash tool calls only. They do not guard
   user shells, other process-launching tools, or commands run outside the host.

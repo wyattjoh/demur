@@ -69,9 +69,13 @@ command while code handles facts that can be resolved reliably.
 model state. Questions must judge the command's objective effects, not whether
 those effects were requested or permitted.
 
-**Preserve fail-closed behavior.** Missing credentials, timeouts, malformed
-responses, and unexpected errors deny the command. Only the explicit
-`DEMUR_DISABLE` kill switch may bypass judgment.
+**Preserve fail-closed defaults.** Missing credentials, timeouts, malformed
+responses, and unexpected errors produce a failure verdict that denies the
+command. While enabled, the Pi extension may apply its explicit, globally
+persisted failure policy only when `Verdict.failure` is set or its worker fails;
+it must never loosen a completed policy denial. The Pi `/demur` menu may also
+persistently disable that host integration, and its bottom-bar status must keep
+that bypass visible. `DEMUR_DISABLE` remains the cross-host emergency bypass.
 
 ## Static uncertainty gate
 

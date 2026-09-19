@@ -12,6 +12,15 @@ import {
   estimateInputCostUsd,
   recordInputCost,
 } from "./cost-tracker.ts";
+import {
+  DEFAULT_DEMUR_SETTINGS,
+  FAILURE_POLICIES,
+  loadDemurSettings,
+  parseFailurePolicy,
+  saveDemurSettings,
+  type DemurSettings,
+  type FailurePolicy,
+} from "./settings.ts";
 
 const WORKER_PATH = fileURLToPath(
   new URL("../../src/adapters/pi-worker.ts", import.meta.url),
@@ -26,13 +35,16 @@ const MAX_WORKER_OUTPUT_BYTES = 64 * 1024;
  *
  * @param event - The tool call Pi is about to execute
  * @param ctx - Extension context, used for the working directory and prompts
+ * @param settings - Current global Pi extension settings
  * @returns A block result when the command is denied, otherwise nothing
  */
 export async function handleToolCall(
   event: ToolCallEvent,
   ctx: ExtensionContext,
+  settings: DemurSettings = DEFAULT_DEMUR_SETTINGS,
 ): Promise<ToolCallEventResult | undefined> {
   if (!isToolCallEventType("bash", event)) return undefined;
+  if (!settings.enabled) return undefined;
 
   const command = event.input.command ?? "";
   if (command.trim() === "") return undefined;
@@ -43,16 +55,79 @@ export async function handleToolCall(
     verdict = await runGuardWorker(command, ctx.cwd, ctx.signal);
   } catch (error: unknown) {
     const evaluationMs = performance.now() - evaluationStartedAt;
-    notifyRun(ctx, "ERROR", undefined, undefined, evaluationMs, "warning");
-    return {
-      block: true,
-      reason: `demur: guard worker crashed — ${errorDetail(error)} Blocking because demur fails closed. Set DEMUR_DISABLE=1 to bypass.`,
-    };
+    if (ctx.signal?.aborted) {
+      notifyRun(
+        ctx,
+        "CANCELLED → BLOCK",
+        undefined,
+        undefined,
+        evaluationMs,
+        "warning",
+      );
+      return {
+        block: true,
+        reason: "demur: guard request cancelled, so blocking the command.",
+      };
+    }
+
+    return handleGuardFailure(
+      `demur: guard worker crashed — ${errorDetail(error)}`,
+      command,
+      ctx,
+      settings.failurePolicy,
+      undefined,
+      undefined,
+      evaluationMs,
+    );
   }
 
   const evaluationMs = performance.now() - evaluationStartedAt;
   const inputTokens = verdict.usage?.inputTokens;
   const accumulatedCostUsd = await recordAccumulatedCost(inputTokens);
+  return resolveVerdict(
+    verdict,
+    command,
+    ctx,
+    settings.failurePolicy,
+    accumulatedCostUsd,
+    evaluationMs,
+  );
+}
+
+/**
+ * Apply the Pi extension's host policy to one completed guard verdict.
+ *
+ * A configured failure policy is consulted only when `verdict.failure` is set.
+ * Ordinary model and deterministic-policy denials always remain blocked.
+ *
+ * @param verdict - Completed demur guard result
+ * @param command - Shell command awaiting execution
+ * @param ctx - Pi extension context used for prompts and notifications
+ * @param failurePolicy - Host action to take when the guard failed
+ * @param accumulatedCostUsd - Persisted global estimate after this run
+ * @param evaluationMs - Wall-clock time spent obtaining the guard verdict
+ * @returns A block result when Pi must stop the command, otherwise nothing
+ */
+export async function resolveVerdict(
+  verdict: Verdict,
+  command: string,
+  ctx: ExtensionContext,
+  failurePolicy: FailurePolicy,
+  accumulatedCostUsd: number | undefined,
+  evaluationMs: number,
+): Promise<ToolCallEventResult | undefined> {
+  const inputTokens = verdict.usage?.inputTokens;
+  if (verdict.failure !== undefined) {
+    return handleGuardFailure(
+      stripFailClosedSuffix(verdict.reason),
+      command,
+      ctx,
+      failurePolicy,
+      inputTokens,
+      accumulatedCostUsd,
+      evaluationMs,
+    );
+  }
 
   if (verdict.decision === "allow") {
     notifyRun(
@@ -240,7 +315,166 @@ export function runGuardWorker(
  * @param pi - The extension API provided by Pi
  */
 export default function demur(pi: ExtensionAPI): void {
-  pi.on("tool_call", handleToolCall);
+  let settings = { ...DEFAULT_DEMUR_SETTINGS };
+
+  pi.registerCommand("demur", {
+    description: "Configure the demur guard",
+    handler: async (_args, ctx) => {
+      if (!ctx.hasUI) {
+        ctx.ui.notify("The /demur menu requires an interactive UI.", "warning");
+        return;
+      }
+
+      const toggleLabel = settings.enabled ? "Disable demur" : "Enable demur";
+      const policyLabel = `Change failure policy (current: ${settings.failurePolicy})`;
+      const action = await ctx.ui.select("demur", [toggleLabel, policyLabel]);
+      if (action === undefined) return;
+
+      if (action === toggleLabel) {
+        await persistSettings(
+          { ...settings, enabled: !settings.enabled },
+          ctx,
+        );
+        return;
+      }
+
+      const selection = await ctx.ui.select(
+        `demur failure policy (current: ${settings.failurePolicy})`,
+        [...FAILURE_POLICIES],
+      );
+      if (selection === undefined) return;
+
+      const failurePolicy = parseFailurePolicy(selection);
+      if (failurePolicy === undefined) return;
+      await persistSettings({ ...settings, failurePolicy }, ctx);
+    },
+  });
+
+  pi.on("session_start", async (_event, ctx) => {
+    try {
+      settings = await loadDemurSettings();
+    } catch (error: unknown) {
+      settings = { ...DEFAULT_DEMUR_SETTINGS };
+      ctx.ui.notify(
+        `Could not load demur settings; using enabled/block: ${errorDetail(error)}`,
+        "warning",
+      );
+    }
+    updateStatus(ctx, settings);
+  });
+
+  pi.on("tool_call", (event, ctx) =>
+    handleToolCall(event, ctx, settings),
+  );
+
+  async function persistSettings(
+    nextSettings: DemurSettings,
+    ctx: ExtensionContext,
+  ): Promise<void> {
+    try {
+      await saveDemurSettings(nextSettings);
+      settings = nextSettings;
+      updateStatus(ctx, settings);
+      ctx.ui.notify(settingsNotification(settings), "info");
+    } catch (error: unknown) {
+      ctx.ui.notify(
+        `Could not save demur settings: ${errorDetail(error)}`,
+        "error",
+      );
+    }
+  }
+}
+
+function updateStatus(
+  ctx: ExtensionContext,
+  settings: DemurSettings,
+): void {
+  const status = settings.enabled ? "enabled" : "disabled";
+  const color = settings.enabled ? "success" : "warning";
+  ctx.ui.setStatus("demur", ctx.ui.theme.fg(color, `demur: ${status}`));
+}
+
+function settingsNotification(settings: DemurSettings): string {
+  const status = settings.enabled ? "enabled" : "disabled";
+  return `demur ${status} globally; failure policy: ${settings.failurePolicy}.`;
+}
+
+async function handleGuardFailure(
+  reason: string,
+  command: string,
+  ctx: ExtensionContext,
+  failurePolicy: FailurePolicy,
+  inputTokens: number | undefined,
+  accumulatedCostUsd: number | undefined,
+  evaluationMs: number,
+): Promise<ToolCallEventResult | undefined> {
+  if (failurePolicy === "allow") {
+    notifyRun(
+      ctx,
+      "FAILURE → ALLOW",
+      inputTokens,
+      accumulatedCostUsd,
+      evaluationMs,
+      "warning",
+    );
+    return undefined;
+  }
+
+  if (failurePolicy === "block") {
+    notifyRun(
+      ctx,
+      "FAILURE → BLOCK",
+      inputTokens,
+      accumulatedCostUsd,
+      evaluationMs,
+      "warning",
+    );
+    return {
+      block: true,
+      reason: `${reason} Blocking because the Pi failure policy is block.`,
+    };
+  }
+
+  if (!ctx.hasUI) {
+    notifyRun(
+      ctx,
+      "FAILURE → BLOCK",
+      inputTokens,
+      accumulatedCostUsd,
+      evaluationMs,
+      "warning",
+    );
+    return {
+      block: true,
+      reason: `${reason} The Pi failure policy is ask, but no interactive UI is available, so blocking.`,
+    };
+  }
+
+  const approved = await ctx.ui.confirm(
+    "demur guard failure",
+    `${reason}\n\n${command}\n\nThe guard could not validate this command. Run it anyway?`,
+  );
+  notifyRun(
+    ctx,
+    approved ? "FAILURE → ALLOW" : "FAILURE → BLOCK",
+    inputTokens,
+    accumulatedCostUsd,
+    evaluationMs,
+    "warning",
+  );
+  if (approved) return undefined;
+
+  return {
+    block: true,
+    reason: `${reason} Execution declined after the guard failure.`,
+  };
+}
+
+function stripFailClosedSuffix(reason: string): string {
+  return reason.replace(
+    / Blocking because demur fails closed\. Set DEMUR_DISABLE=1 to bypass\.$/,
+    "",
+  );
 }
 
 function notifyRun(
