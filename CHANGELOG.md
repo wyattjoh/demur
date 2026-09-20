@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/wyattjoh/demur/compare/v0.4.0...v0.4.1) (2026-09-20)
+
+
+### Performance Improvements
+
+* reduce judgment prompt token usage ([#17](https://github.com/wyattjoh/demur/issues/17)) ([7980b94](https://github.com/wyattjoh/demur/commit/7980b94c777464581e6add0c1fdbd66e143b6fab))
+
 ## [0.4.0](https://github.com/wyattjoh/demur/compare/v0.3.2...v0.4.0) (2026-09-19)
 
 
