@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/wyattjoh/demur/compare/v0.4.1...v0.4.2) (2026-09-20)
+
+
+### Bug Fixes
+
+* **pi:** refresh settings before tool calls ([#19](https://github.com/wyattjoh/demur/issues/19)) ([d8cf95c](https://github.com/wyattjoh/demur/commit/d8cf95cfe3ae7155d66752bf3a17a48e183b1c3d))
+
 ## [0.4.1](https://github.com/wyattjoh/demur/compare/v0.4.0...v0.4.1) (2026-09-20)
 
 
