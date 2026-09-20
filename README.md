@@ -92,7 +92,7 @@ Pin a specific release when reproducibility matters:
 
 <!-- x-release-please-start-version -->
 ```sh
-pi install npm:@wyattjoh/demur@0.4.1
+pi install npm:@wyattjoh/demur@0.4.2
 ```
 <!-- x-release-please-end -->
 
