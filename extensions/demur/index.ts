@@ -325,6 +325,7 @@ export default function demur(pi: ExtensionAPI): void {
         return;
       }
 
+      await refreshSettings(ctx);
       const toggleLabel = settings.enabled ? "Disable demur" : "Enable demur";
       const policyLabel = `Change failure policy (current: ${settings.failurePolicy})`;
       const action = await ctx.ui.select("demur", [toggleLabel, policyLabel]);
@@ -351,6 +352,15 @@ export default function demur(pi: ExtensionAPI): void {
   });
 
   pi.on("session_start", async (_event, ctx) => {
+    await refreshSettings(ctx);
+  });
+
+  pi.on("tool_call", async (event, ctx) => {
+    await refreshSettings(ctx);
+    return handleToolCall(event, ctx, settings);
+  });
+
+  async function refreshSettings(ctx: ExtensionContext): Promise<void> {
     try {
       settings = await loadDemurSettings();
     } catch (error: unknown) {
@@ -361,11 +371,7 @@ export default function demur(pi: ExtensionAPI): void {
       );
     }
     updateStatus(ctx, settings);
-  });
-
-  pi.on("tool_call", (event, ctx) =>
-    handleToolCall(event, ctx, settings),
-  );
+  }
 
   async function persistSettings(
     nextSettings: DemurSettings,

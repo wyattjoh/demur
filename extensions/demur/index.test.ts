@@ -14,6 +14,7 @@ import { estimateInputCostUsd } from "./cost-tracker.ts";
 import {
   getDemurConfigPath,
   loadDemurSettings,
+  saveDemurSettings,
 } from "./settings.ts";
 import demur, {
   formatEvaluationDuration,
@@ -90,14 +91,90 @@ describe("Pi extension", () => {
       await sessionStartHandler({}, ctx);
       assert.strictEqual(statuses.at(-1), "demur: enabled");
 
+      const configPath = getDemurConfigPath(
+        { XDG_CONFIG_HOME: configDirectory },
+        "/unused",
+      );
+      await saveDemurSettings(
+        { enabled: true, failurePolicy: "ask" },
+        configPath,
+      );
+
       await commandHandler("", ctx);
       assert.strictEqual(statuses.at(-1), "demur: disabled");
       assert.deepEqual(
-        await loadDemurSettings(
-          getDemurConfigPath({ XDG_CONFIG_HOME: configDirectory }, "/unused"),
-        ),
-        { enabled: false, failurePolicy: "block" },
+        await loadDemurSettings(configPath),
+        { enabled: false, failurePolicy: "ask" },
       );
+    } finally {
+      if (previousConfigDirectory === undefined) {
+        delete process.env.XDG_CONFIG_HOME;
+      } else {
+        process.env.XDG_CONFIG_HOME = previousConfigDirectory;
+      }
+    }
+  });
+
+  it("reloads global settings before every tool invocation", async () => {
+    let sessionStartHandler:
+      | ((event: unknown, ctx: ExtensionContext) => Promise<void>)
+      | undefined;
+    let toolCallHandler:
+      | ((event: ToolCallEvent, ctx: ExtensionContext) => Promise<unknown>)
+      | undefined;
+    demur({
+      registerCommand: () => {},
+      on: (event: string, handler: unknown) => {
+        if (event === "session_start") {
+          sessionStartHandler = handler as typeof sessionStartHandler;
+        }
+        if (event === "tool_call") {
+          toolCallHandler = handler as typeof toolCallHandler;
+        }
+      },
+    } as unknown as ExtensionAPI);
+
+    const configDirectory = await mkdtemp(join(tmpdir(), "demur-refresh-"));
+    const previousConfigDirectory = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = configDirectory;
+    const statuses: string[] = [];
+    const ctx = {
+      cwd: process.cwd(),
+      hasUI: true,
+      signal: undefined,
+      ui: {
+        notify: () => {},
+        setStatus: (_key: string, value: string | undefined) => {
+          if (value !== undefined) statuses.push(value);
+        },
+        theme: {
+          fg: (_color: string, value: string) => value,
+        },
+      },
+    } as unknown as ExtensionContext;
+
+    try {
+      if (sessionStartHandler === undefined || toolCallHandler === undefined) {
+        assert.fail("demur did not register its session and tool handlers");
+      }
+
+      await sessionStartHandler({}, ctx);
+      assert.strictEqual(statuses.at(-1), "demur: enabled");
+
+      await saveDemurSettings(
+        { enabled: false, failurePolicy: "ask" },
+        getDemurConfigPath({ XDG_CONFIG_HOME: configDirectory }, "/unused"),
+      );
+      await toolCallHandler(
+        {
+          toolName: "read",
+          toolCallId: "refresh-test",
+          input: { path: "README.md" },
+        } as unknown as ToolCallEvent,
+        ctx,
+      );
+
+      assert.strictEqual(statuses.at(-1), "demur: disabled");
     } finally {
       if (previousConfigDirectory === undefined) {
         delete process.env.XDG_CONFIG_HOME;
