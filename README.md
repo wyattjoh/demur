@@ -218,21 +218,32 @@ demur auth login
 demur auth status
 demur auth logout
 demur training review
-# Force the line-oriented interface for pipes or basic terminals:
-demur training review --plain
+demur training list --status=unreviewed --cwd=/workspace
+demur training list --status=deny --json
+demur training review <record-id> --decision=deny --note="would destroy work" --json
 demur judge "git reset --hard HEAD~3"
 ```
 
 Bare `demur` opens the central OpenTUI interface when stdin and stdout are
 interactive. `demur training review` remains an explicit alias for the same
-interface. Its header shows the persisted global estimated cost, and each queue
-row shows that evaluation's estimated input cost. It starts in an `all` view;
-Tab and Shift-Tab rotate between `all`, `not reviewed`, `approved` (`allow`),
-`ask`, and `deny` views. The queue is focused initially: arrow keys navigate it,
-Up from its first result focuses a
-fuzzy working-directory filter, and another Up focuses the tab strip. Left and
-Right select adjacent focused tabs, while Down returns through the filter to the
-queue. Right from the queue focuses the scrollable detail pane.
+interface. `[` opens Reviews and `]` opens Settings. You can also navigate Up
+to the top-level section strip, use Left and Right to switch sections, and press
+Down or Enter to open one. Settings exposes every option from Pi's `/demur`
+menu—operating mode, training capture,
+and failure policy—and atomically saves each change to the same global
+configuration file. Use Up and Down to select a setting, Left and Right to
+change it in either direction, or Enter/Space to choose its next value.
+Disabling demur also turns training capture off, and training remains unavailable
+until an active mode is selected.
+
+The Reviews header shows the persisted global estimated cost, and each queue row
+shows the model decision in a muted semantic color. It starts in an `all` view;
+Tab and Shift-Tab rotate between `all`, `not reviewed`, `approved` (`allow`), `ask`,
+and `deny` views. The queue is focused initially: arrow keys navigate it, Up
+from its first result focuses a fuzzy working-directory filter, and another Up
+focuses the tab strip. Left and Right select adjacent focused tabs, while Down
+returns through the filter to the queue. Right from the queue focuses the
+scrollable detail pane.
 The detail pane supports arrows or `j`/`k`; Left returns to the queue. Page Up
 and Page Down page within the focused pane, and queue navigation stops at its
 first and last entries. Mouse clicks select tabs, records, the filter, or either
@@ -242,9 +253,18 @@ leaves a record for a later pass, and `q` or Escape stops. Previously reviewed
 records remain available, and changing an answer appends a review revision while
 preserving its visible history. The TUI remains open when a view is empty and
 polls training state for newly captured or externally reviewed evaluations.
-Non-interactive invocations automatically use the line-oriented reviewer; pass
-`--plain` to select it explicitly. Reviews remain separate from the original
-evidence so they can later be curated into independently licensed eval fixtures.
+
+Flag-based training commands provide the same review operations without the
+TUI. `demur training list` accepts `--status` and fuzzy `--cwd` filters. Status
+is derived from the latest human review, so `allow`, `ask`, and `deny` select
+reviewed records while `unreviewed` selects records without a review. Record a
+new append-only review revision by passing a record ID, a required
+`--decision=<allow|ask|deny>`, and an optional `--note`. Add `--json` to either
+operation to emit one versioned JSON document; JSON failures are written to
+stdout with a nonzero exit code. Interactive `demur training review` still opens
+the TUI, but without a terminal it requires an explicit list or record-ID review
+operation. Reviews remain separate from the original evidence so they can later
+be curated into independently licensed eval fixtures.
 
 From a development checkout, `bun run judge "<command>"` remains available.
 

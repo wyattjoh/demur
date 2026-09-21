@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import type { DemurSettings } from "../extensions/demur/settings.ts";
 import type {
   TrainingRecord,
   TrainingReview,
@@ -18,6 +19,24 @@ const allowedVerdict: Verdict = {
   usage: undefined,
 };
 
+function makeTrainingRecord(
+  id: string,
+  command: string,
+  cwd: string,
+  decision: Verdict["decision"] = "allow",
+): TrainingRecord {
+  return {
+    version: 1,
+    id,
+    recordedAt: "2026-01-01T00:00:00.000Z",
+    command,
+    cwd,
+    mode: "passive",
+    verdict: { ...allowedVerdict, decision },
+    hostAction: "allow",
+  };
+}
+
 type CliState = {
   resolved: ResolvedApiKey | undefined;
   stored: string | undefined;
@@ -28,10 +47,12 @@ type CliState = {
   trainingReviews: Array<TrainingReview>;
   globalEstimatedCostUsd: number;
   recordedReviews: Array<TrainingReviewInput>;
-  reviewInputs: Array<string>;
   interactive: boolean;
+  settings: DemurSettings;
+  savedSettings: Array<DemurSettings>;
   tuiCalls: Array<TrainingReviewSnapshot>;
   tuiReloads: Array<TrainingReviewSnapshot>;
+  tuiSettings: Array<DemurSettings>;
   stdout: Array<string>;
   stderr: Array<string>;
 };
@@ -61,8 +82,13 @@ function makeDependencies(
         ...input,
       };
     },
-    runTrainingReviewTui: async (snapshot, reloadSnapshot) => {
+    loadDemurSettings: async () => state.settings,
+    saveDemurSettings: async (settings) => {
+      state.savedSettings.push(settings);
+    },
+    runTrainingReviewTui: async (snapshot, settings, reloadSnapshot) => {
       state.tuiCalls.push(snapshot);
+      state.tuiSettings.push(settings);
       state.tuiReloads.push(await reloadSnapshot());
       return {
         reviewed: snapshot.records.length,
@@ -75,7 +101,6 @@ function makeDependencies(
       state.promptCalls += 1;
       return promptedValue;
     },
-    readLine: async () => state.reviewInputs.shift() ?? "quit",
     cwd: () => "/default",
     stdout: (message) => state.stdout.push(message),
     stderr: (message) => state.stderr.push(message),
@@ -95,10 +120,16 @@ function makeState(
     trainingReviews: [],
     globalEstimatedCostUsd: 0,
     recordedReviews: [],
-    reviewInputs: [],
     interactive: false,
+    settings: {
+      mode: "enforce",
+      training: false,
+      failurePolicy: "block",
+    },
+    savedSettings: [],
     tuiCalls: [],
     tuiReloads: [],
+    tuiSettings: [],
     stdout: [],
     stderr: [],
   };
@@ -164,26 +195,78 @@ describe("demur CLI", () => {
     assert.include(state.stdout.join("\n"), "unset separately");
   });
 
-  it("reviews training records and persists corrected decisions", async () => {
+  it("lists training records with status and cwd filters", async () => {
     const state = makeState();
-    state.trainingRecords.push({
-      version: 1,
-      id: "record-1",
-      recordedAt: "2026-01-01T00:00:00.000Z",
-      command: "git reset --hard HEAD~1",
-      cwd: "/workspace",
-      mode: "passive",
-      verdict: {
-        ...allowedVerdict,
-        decision: "allow",
-        reason: "demur: judged safe",
-      },
-      hostAction: "allow",
-    });
-    state.reviewInputs.push("deny", "would destroy unpushed work");
+    state.trainingRecords.push(
+      makeTrainingRecord("record-1", "printf ok", "/workspace/app"),
+      makeTrainingRecord("record-2", "git reset --hard", "/archive", "deny"),
+    );
 
     const exitCode = await runCli(
-      ["training", "review"],
+      ["training", "list", "--status=unreviewed", "--cwd", "workspace"],
+      makeDependencies(state),
+    );
+
+    assert.strictEqual(exitCode, 0);
+    assert.include(state.stdout.join("\n"), "record-1");
+    assert.include(state.stdout.join("\n"), "model=allow");
+    assert.notInclude(state.stdout.join("\n"), "record-2");
+  });
+
+  it("lists complete filtered history as one JSON document", async () => {
+    const state = makeState();
+    state.trainingRecords.push(
+      makeTrainingRecord("record-1", "printf ok", "/workspace"),
+      makeTrainingRecord("record-2", "git reset --hard", "/workspace"),
+    );
+    state.trainingReviews.push({
+      version: 1,
+      recordId: "record-2",
+      reviewedAt: "2026-01-02T00:00:00.000Z",
+      originalDecision: "allow",
+      expectedDecision: "deny",
+      note: "destructive",
+    });
+
+    const exitCode = await runCli(
+      ["training", "list", "--status", "deny", "--json"],
+      makeDependencies(state),
+    );
+
+    const payload = JSON.parse(state.stdout[0] ?? "");
+    assert.strictEqual(exitCode, 0);
+    assert.strictEqual(state.stdout.length, 1);
+    assert.strictEqual(payload.version, 1);
+    assert.strictEqual(payload.ok, true);
+    assert.strictEqual(payload.operation, "training.list");
+    assert.strictEqual(payload.result.records.length, 1);
+    assert.strictEqual(payload.result.records[0].record.id, "record-2");
+    assert.strictEqual(payload.result.records[0].status, "deny");
+    assert.strictEqual(
+      payload.result.records[0].latestReview.expectedDecision,
+      "deny",
+    );
+  });
+
+  it("reviews a record by ID with decision and note flags", async () => {
+    const state = makeState();
+    state.trainingRecords.push(
+      makeTrainingRecord(
+        "record-1",
+        "git reset --hard HEAD~1",
+        "/workspace",
+      ),
+    );
+
+    const exitCode = await runCli(
+      [
+        "training",
+        "review",
+        "record-1",
+        "--decision",
+        "deny",
+        "--note=would destroy unpushed work",
+      ],
       makeDependencies(state),
     );
 
@@ -194,8 +277,98 @@ describe("demur CLI", () => {
       expectedDecision: "deny",
       note: "would destroy unpushed work",
     }]);
-    assert.include(state.stdout.join("\n"), "ALLOW");
-    assert.include(state.stdout.join("\n"), "1 corrected");
+    assert.include(state.stdout.join("\n"), "Recorded DENY review");
+  });
+
+  it("preserves a note when accepting the model decision", async () => {
+    const state = makeState();
+    state.trainingRecords.push(
+      makeTrainingRecord("record-1", "printf ok", "/workspace"),
+    );
+
+    const exitCode = await runCli(
+      [
+        "training",
+        "review",
+        "record-1",
+        "--decision=allow",
+        "--note=verified read-only operation",
+        "--json",
+      ],
+      makeDependencies(state),
+    );
+
+    const payload = JSON.parse(state.stdout[0] ?? "");
+    assert.strictEqual(exitCode, 0);
+    assert.strictEqual(
+      state.recordedReviews[0]?.note,
+      "verified read-only operation",
+    );
+    assert.strictEqual(
+      payload.result.review.note,
+      "verified read-only operation",
+    );
+  });
+
+  it("returns a versioned JSON review result with prior revision", async () => {
+    const state = makeState();
+    state.trainingRecords.push(
+      makeTrainingRecord("record-1", "printf ok", "/workspace"),
+    );
+    state.trainingReviews.push({
+      version: 1,
+      recordId: "record-1",
+      reviewedAt: "2026-01-01T12:00:00.000Z",
+      originalDecision: "allow",
+      expectedDecision: "allow",
+      note: undefined,
+    });
+
+    const exitCode = await runCli(
+      [
+        "training",
+        "review",
+        "record-1",
+        "--decision=ask",
+        "--note",
+        "needs confirmation",
+        "--json",
+      ],
+      makeDependencies(state),
+    );
+
+    const payload = JSON.parse(state.stdout[0] ?? "");
+    assert.strictEqual(exitCode, 0);
+    assert.strictEqual(state.stdout.length, 1);
+    assert.strictEqual(payload.ok, true);
+    assert.strictEqual(payload.operation, "training.review");
+    assert.strictEqual(payload.result.review.expectedDecision, "ask");
+    assert.strictEqual(payload.result.review.note, "needs confirmation");
+    assert.strictEqual(
+      payload.result.previousReview.expectedDecision,
+      "allow",
+    );
+  });
+
+  it("returns machine-readable review errors", async () => {
+    const state = makeState();
+
+    const exitCode = await runCli(
+      [
+        "training",
+        "review",
+        "missing",
+        "--decision=deny",
+        "--json",
+      ],
+      makeDependencies(state),
+    );
+
+    const payload = JSON.parse(state.stdout[0] ?? "");
+    assert.strictEqual(exitCode, 1);
+    assert.strictEqual(state.stderr.length, 0);
+    assert.strictEqual(payload.ok, false);
+    assert.strictEqual(payload.error.code, "record_not_found");
   });
 
   it("opens the central TUI for a bare interactive invocation", async () => {
@@ -210,6 +383,11 @@ describe("demur CLI", () => {
       reviews: [],
       globalEstimatedCostUsd: 0,
     }]);
+    assert.deepEqual(state.tuiSettings, [{
+      mode: "enforce",
+      training: false,
+      failurePolicy: "block",
+    }]);
     assert.include(state.stdout.join("\n"), "Reviewed 0 records");
   });
 
@@ -221,7 +399,7 @@ describe("demur CLI", () => {
     assert.strictEqual(exitCode, 2);
     assert.strictEqual(state.tuiCalls.length, 0);
     assert.include(state.stderr.join("\n"), "requires a terminal");
-    assert.include(state.stderr.join("\n"), "--plain");
+    assert.include(state.stderr.join("\n"), "training list --json");
   });
 
   it("opens the TUI by default on an interactive terminal", async () => {
@@ -279,60 +457,47 @@ describe("demur CLI", () => {
     assert.include(state.stdout.join("\n"), "Reviewed 0 records");
   });
 
-  it("uses the plain reviewer when explicitly requested", async () => {
+  it("rejects interactive review without a terminal", async () => {
     const state = makeState();
-    state.interactive = true;
-    state.trainingRecords.push({
-      version: 1,
-      id: "record-1",
-      recordedAt: "2026-01-01T00:00:00.000Z",
-      command: "printf ok",
-      cwd: "/workspace",
-      mode: "passive",
-      verdict: allowedVerdict,
-      hostAction: "allow",
-    });
-    state.reviewInputs.push("");
-
-    const exitCode = await runCli(
-      ["training", "review", "--plain"],
-      makeDependencies(state),
-    );
-
-    assert.strictEqual(exitCode, 0);
-    assert.strictEqual(state.tuiCalls.length, 0);
-    assert.strictEqual(state.recordedReviews[0]?.expectedDecision, "allow");
-  });
-
-  it("skips records that already have a review", async () => {
-    const state = makeState();
-    state.trainingRecords.push({
-      version: 1,
-      id: "record-1",
-      recordedAt: "2026-01-01T00:00:00.000Z",
-      command: "printf ok",
-      cwd: "/workspace",
-      mode: "enforce",
-      verdict: allowedVerdict,
-      hostAction: "allow",
-    });
-    state.trainingReviews.push({
-      version: 1,
-      recordId: "record-1",
-      reviewedAt: "2026-01-02T00:00:00.000Z",
-      originalDecision: "allow",
-      expectedDecision: "allow",
-      note: undefined,
-    });
 
     const exitCode = await runCli(
       ["training", "review"],
       makeDependencies(state),
     );
 
-    assert.strictEqual(exitCode, 0);
-    assert.include(state.stdout.join("\n"), "No unreviewed");
-    assert.deepEqual(state.recordedReviews, []);
+    assert.strictEqual(exitCode, 2);
+    assert.strictEqual(state.tuiCalls.length, 0);
+    assert.include(state.stderr.join("\n"), "requires a terminal");
+    assert.include(state.stderr.join("\n"), "review a record by ID");
+  });
+
+  it("rejects the removed plain flag", async () => {
+    const state = makeState();
+
+    const exitCode = await runCli(
+      ["training", "review", "--plain"],
+      makeDependencies(state),
+    );
+
+    assert.strictEqual(exitCode, 2);
+    assert.strictEqual(state.recordedReviews.length, 0);
+    assert.include(state.stderr.join("\n"), "unknown option: --plain");
+  });
+
+  it("returns JSON argument errors without human usage output", async () => {
+    const state = makeState();
+
+    const exitCode = await runCli(
+      ["training", "list", "--status=unknown", "--json"],
+      makeDependencies(state),
+    );
+
+    const payload = JSON.parse(state.stdout[0] ?? "");
+    assert.strictEqual(exitCode, 2);
+    assert.strictEqual(state.stderr.length, 0);
+    assert.strictEqual(payload.ok, false);
+    assert.strictEqual(payload.error.code, "invalid_arguments");
+    assert.include(payload.error.message, "unsupported status");
   });
 
   it("preserves the judge command and cwd option", async () => {

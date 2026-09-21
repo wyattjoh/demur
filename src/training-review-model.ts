@@ -119,7 +119,7 @@ export function filterTrainingReviewEntries(
  *
  * @param record - Training evidence being reviewed
  * @param expectedDecision - Human-selected expected outcome
- * @param note - Optional correction explanation
+ * @param note - Optional explanation for the human decision
  * @returns Normalized review input for persistence
  */
 export function createTrainingReviewInput(
@@ -127,12 +127,11 @@ export function createTrainingReviewInput(
   expectedDecision: Decision,
   note: string | undefined,
 ): TrainingReviewInput {
-  const corrected = expectedDecision !== record.verdict.decision;
   return {
     recordId: record.id,
     originalDecision: record.verdict.decision,
     expectedDecision,
-    note: corrected ? note?.trim() || undefined : undefined,
+    note: note?.trim() || undefined,
   };
 }
 

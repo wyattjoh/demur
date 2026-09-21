@@ -13,8 +13,9 @@ System One. Read README.md for setup, data disclosure, and limitations.
 - `src/guard.internal.ts` — Effect-native orchestration and fail-closed posture.
 - `src/guard.ts` — managed runtime and Promise compatibility boundary.
 - `extensions/demur/` — Node-compatible Pi extension, atomic global cost tracker, and append-only training store.
+- `src/settings-model.ts` — pure transitions for the shared Pi-extension/TUI settings.
 - `src/training-review-model.ts` — pure historical review status and cwd-filtering model.
-- `src/training-review-tui.tsx` — live OpenTUI queue/detail reviewer; the CLI retains a plain non-TTY fallback.
+- `src/training-review-tui.tsx` — live OpenTUI review and settings interface; the CLI retains a plain non-TTY review fallback.
 - `src/adapters/pi-worker.ts` — Bun guard worker launched by the Pi extension.
 - `src/adapters/claude-code.ts` — Claude Code `PreToolUse` hook.
 - `eval/` — synthetic contrast corpus, pure scoring, and live runner.
