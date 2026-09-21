@@ -7,6 +7,7 @@ import {
   type DemurSettings,
 } from "../extensions/demur/settings.ts";
 import {
+  isTrainingCorrectionReason,
   loadTrainingRecords,
   loadTrainingReviews,
   recordTrainingReview,
@@ -15,12 +16,17 @@ import {
   type TrainingReviewInput,
 } from "../extensions/demur/training-store.ts";
 import { guard } from "./guard.ts";
+import { judgeRenderedState, type JudgeResult } from "./judge.ts";
 import {
   deleteApiKey,
   resolveApiKey,
   storeApiKey,
   type ResolvedApiKey,
 } from "./key.ts";
+import {
+  analyzeTrainingFeedback,
+  replayTrainingQuestions,
+} from "./training-evaluation.ts";
 import {
   buildTrainingReviewEntries,
   createTrainingReviewInput,
@@ -32,7 +38,7 @@ import {
   type TrainingReviewSnapshot,
 } from "./training-review-model.ts";
 import type { TrainingReviewTuiResult } from "./training-review-tui.tsx";
-import type { Verdict } from "./types.ts";
+import type { RenderedCommandState, Verdict } from "./types.ts";
 
 const USAGE = `Usage:
   demur
@@ -40,8 +46,9 @@ const USAGE = `Usage:
   demur auth status
   demur auth logout
   demur training list [--status=<all|unreviewed|allow|ask|deny>] [--cwd=<query>] [--json]
+  demur training evaluate [--replay] [--limit=<1-100>] [--json]
   demur training review
-  demur training review <record-id> --decision=<allow|ask|deny> [--note=<text>] [--json]
+  demur training review <record-id> --decision=<allow|ask|deny> [--reason=<correction-reason>] [--note=<text>] [--json]
   demur judge "<command>" [--cwd=<path>]`;
 
 /**
@@ -49,6 +56,7 @@ const USAGE = `Usage:
  */
 export type CliDependencies = {
   judge(command: string, cwd: string): Promise<Verdict>;
+  judgeTrainingState(state: RenderedCommandState): Promise<JudgeResult>;
   resolveApiKey(): Promise<ResolvedApiKey | undefined>;
   storeApiKey(value: string): Promise<void>;
   deleteApiKey(): Promise<boolean>;
@@ -74,6 +82,7 @@ export type CliDependencies = {
 
 const defaultDependencies: CliDependencies = {
   judge: (command, cwd) => guard(command, cwd, "cli"),
+  judgeTrainingState: judgeRenderedState,
   resolveApiKey,
   storeApiKey,
   deleteApiKey,
@@ -246,6 +255,10 @@ async function runTraining(
     return runTrainingList(args.slice(1), dependencies);
   }
 
+  if (command === "evaluate") {
+    return runTrainingEvaluate(args.slice(1), dependencies);
+  }
+
   if (command === "review") {
     if (args.length === 1) {
       return runInteractiveTrainingReview(dependencies);
@@ -256,7 +269,7 @@ async function runTraining(
   return writeTrainingUsageError(
     trainingOperation(["training", ...args]),
     args.includes("--json"),
-    "expected `training list` or `training review`",
+    "expected `training list`, `training evaluate`, or `training review`",
     dependencies,
   );
 }
@@ -370,6 +383,120 @@ async function runTrainingList(
   return 0;
 }
 
+async function runTrainingEvaluate(
+  args: ReadonlyArray<string>,
+  dependencies: CliDependencies,
+): Promise<number> {
+  const operation = "training.evaluate";
+  const parsedResult = parseArguments(
+    args,
+    new Set(["json", "replay"]),
+    new Set(["limit"]),
+  );
+  const json = args.includes("--json");
+  if (parsedResult.error !== undefined) {
+    return writeTrainingUsageError(
+      operation,
+      json,
+      parsedResult.error,
+      dependencies,
+    );
+  }
+
+  const parsed = parsedResult.parsed;
+  if (parsed.positionals.length !== 0) {
+    return writeTrainingUsageError(
+      operation,
+      hasOption(parsed, "json"),
+      "`training evaluate` does not accept positional arguments",
+      dependencies,
+    );
+  }
+
+  const limitValue = getStringOption(parsed, "limit");
+  if (limitValue !== undefined && !hasOption(parsed, "replay")) {
+    return writeTrainingUsageError(
+      operation,
+      hasOption(parsed, "json"),
+      "`--limit` requires `--replay`",
+      dependencies,
+    );
+  }
+  const replayLimit = limitValue === undefined ? 20 : Number(limitValue);
+  if (
+    !Number.isInteger(replayLimit) ||
+    replayLimit < 1 ||
+    replayLimit > 100
+  ) {
+    return writeTrainingUsageError(
+      operation,
+      hasOption(parsed, "json"),
+      "`--limit` must be an integer from 1 to 100",
+      dependencies,
+    );
+  }
+
+  const entries = await loadTrainingEntries(dependencies);
+  const report = analyzeTrainingFeedback(entries);
+  const replay = hasOption(parsed, "replay")
+    ? await replayTrainingQuestions(
+      entries,
+      dependencies.judgeTrainingState,
+      replayLimit,
+    )
+    : undefined;
+  if (hasOption(parsed, "json")) {
+    writeTrainingJsonSuccess(
+      operation,
+      replay === undefined ? report : { offline: report, replay },
+      dependencies,
+    );
+    return 0;
+  }
+
+  dependencies.stdout(
+    `Reviewed ${report.reviewed}; evaluable ${report.evaluable}; unavailable ${report.unavailable}.`,
+  );
+  dependencies.stdout(
+    `Replay fidelity: ${report.completeReplayRecords} complete, ${report.policyOnlyRecords} policy-only legacy.`,
+  );
+  dependencies.stdout(
+    `Current policy: ${report.current.matches}/${report.current.evaluated} match; weighted loss ${report.current.weightedLoss}.`,
+  );
+
+  const reasons = Object.entries(report.correctionsByReason);
+  if (reasons.length > 0) {
+    dependencies.stdout(
+      `Correction reasons: ${reasons.map(([reason, count]) => `${reason}=${count}`).join(", ")}.`,
+    );
+  }
+
+  if (report.candidates.length === 0) {
+    dependencies.stdout("No single-threshold candidate improved observed weighted loss.");
+  } else {
+    dependencies.stdout("Exploratory single-threshold candidates:");
+    for (const candidate of report.candidates) {
+      dependencies.stdout(
+        `  ${candidate.field}=${candidate.value}: ${candidate.metrics.matches}/${candidate.metrics.evaluated} match; weighted loss ${candidate.metrics.weightedLoss}`,
+      );
+    }
+  }
+
+  if (report.warning !== undefined) dependencies.stdout(`Warning: ${report.warning}`);
+  dependencies.stdout(
+    "Candidates are not applied automatically; validate them on an independent holdout and the synthetic corpus.",
+  );
+  if (replay !== undefined) {
+    dependencies.stdout(
+      `Current questions replay: ${replay.metrics.matches}/${replay.metrics.evaluated} match; ${replay.improved} improved; ${replay.regressed} regressed; ${replay.unavailable} unavailable; ${replay.skipped} skipped by limit.`,
+    );
+    dependencies.stdout(
+      `Replay usage: ${replay.inputTokens} input / ${replay.outputTokens} output tokens. Stored commands remained data and were never executed.`,
+    );
+  }
+  return 0;
+}
+
 async function runTrainingReview(
   args: ReadonlyArray<string>,
   dependencies: CliDependencies,
@@ -378,7 +505,7 @@ async function runTrainingReview(
   const parsedResult = parseArguments(
     args,
     new Set(["json"]),
-    new Set(["decision", "note"]),
+    new Set(["decision", "reason", "note"]),
   );
   const json = args.includes("--json");
   if (parsedResult.error !== undefined) {
@@ -423,15 +550,37 @@ async function runTrainingReview(
     );
   }
 
+  const corrected = decisionValue !== entry.record.verdict.decision;
+  const reasonValue = getStringOption(parsed, "reason");
+  if (corrected && !isTrainingCorrectionReason(reasonValue)) {
+    return writeTrainingUsageError(
+      operation,
+      hasOption(parsed, "json"),
+      "corrected reviews require `--reason` with a supported correction reason",
+      dependencies,
+    );
+  }
+  if (!corrected && reasonValue !== undefined) {
+    return writeTrainingUsageError(
+      operation,
+      hasOption(parsed, "json"),
+      "`--reason` is only valid when correcting the model decision",
+      dependencies,
+    );
+  }
+
+  const correctionReason = corrected && isTrainingCorrectionReason(reasonValue)
+    ? reasonValue
+    : undefined;
   const previousReview = getLatestTrainingReview(entry) ?? null;
   const review = await dependencies.recordTrainingReview(
     createTrainingReviewInput(
       entry.record,
       decisionValue,
+      correctionReason,
       getStringOption(parsed, "note"),
     ),
   );
-  const corrected = decisionValue !== entry.record.verdict.decision;
 
   if (hasOption(parsed, "json")) {
     writeTrainingJsonSuccess(

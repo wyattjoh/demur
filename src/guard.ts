@@ -1,9 +1,18 @@
 import { Layer, ManagedRuntime, Predicate } from "effect";
-import { guardEffect, judgeStateEffect } from "./guard.internal.ts";
+import {
+  guardEffect,
+  guardEvaluationEffect,
+  judgeStateEffect,
+} from "./guard.internal.ts";
 import { Judgment } from "./judge.ts";
 import { Environment } from "./key.ts";
 import { GitCommand } from "./state.ts";
-import type { CommandState, Host, Verdict } from "./types.ts";
+import type {
+  CommandState,
+  GuardEvaluation,
+  Host,
+  Verdict,
+} from "./types.ts";
 
 const PREFIX = "demur:";
 
@@ -39,6 +48,37 @@ export function guard(
       signal === undefined ? undefined : { signal },
     )
     .catch((error: unknown) => unexpectedVerdict(error, started));
+}
+
+/**
+ * Judge one command while retaining the exact state and policy versions.
+ *
+ * This boundary is used only when a host has enabled local training capture;
+ * ordinary guard callers continue to receive the smaller {@link Verdict}.
+ *
+ * @param command - The shell command the agent wants to run
+ * @param cwd - Absolute working directory for the command
+ * @param agent - Which coding agent is asking
+ * @param signal - Optional cancellation signal from the host
+ * @returns The verdict and replayable evidence, when state collection occurred
+ */
+export function guardWithEvidence(
+  command: string,
+  cwd: string,
+  agent: Host,
+  signal: AbortSignal | undefined = undefined,
+): Promise<GuardEvaluation> {
+  const started = performance.now();
+
+  return runtime
+    .runPromise(
+      guardEvaluationEffect(command, cwd, agent),
+      signal === undefined ? undefined : { signal },
+    )
+    .catch((error: unknown) => ({
+      verdict: unexpectedVerdict(error, started),
+      evidence: undefined,
+    }));
 }
 
 /**

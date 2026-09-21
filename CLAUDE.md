@@ -15,6 +15,7 @@ System One. Read README.md for setup, data disclosure, and limitations.
 - `extensions/demur/` — Node-compatible Pi extension, atomic global cost tracker, and append-only training store.
 - `src/settings-model.ts` — pure transitions for the shared Pi-extension/TUI settings.
 - `src/training-review-model.ts` — pure historical review status and cwd-filtering model.
+- `src/training-evaluation.ts` — pure offline correction metrics and advisory threshold comparisons.
 - `src/training-review-tui.tsx` — live OpenTUI review and settings interface; the CLI retains a plain non-TTY review fallback.
 - `src/adapters/pi-worker.ts` — Bun guard worker launched by the Pi extension.
 - `src/adapters/claude-code.ts` — Claude Code `PreToolUse` hook.
@@ -83,10 +84,12 @@ passive, training, and disabled states visible. `DEMUR_DISABLE` remains the
 cross-host emergency bypass.
 
 **Keep training evidence append-only.** Training capture is available only in
-enforce and passive modes. Store exact commands, context, verdicts, and host
-actions in private XDG state JSONL; store human reviews separately by stable
-record ID so corrections never rewrite the original evidence. Keep the OpenTUI
-and plain review interfaces on the same storage callbacks and decision model.
+enforce and passive modes. Store exact commands, model-visible state, local
+static-gate analysis, question/policy provenance, verdicts, and host actions in
+private XDG state JSONL; store human reviews separately by stable record ID so
+corrections never rewrite the original evidence. Corrected reviews require a
+structured reason in addition to their optional note. Keep the OpenTUI and plain
+review interfaces on the same storage callbacks and decision model.
 The TUI is a live historical queue: keep it open while a view is empty, poll
 append-only state for new evaluations and reviews, and derive each status from
 the latest review while keeping prior revisions visible. Recording failures

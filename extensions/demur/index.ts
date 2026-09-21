@@ -7,7 +7,11 @@ import {
   type ToolCallEvent,
   type ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
-import type { Verdict } from "../../src/types.ts";
+import type {
+  GuardEvaluation,
+  GuardEvidence,
+  Verdict,
+} from "../../src/types.ts";
 import {
   estimateInputCostUsd,
   formatUsd,
@@ -54,9 +58,15 @@ export async function handleToolCall(
   if (command.trim() === "") return undefined;
 
   const evaluationStartedAt = performance.now();
-  let verdict: Verdict;
+  let evaluation: GuardEvaluation;
   try {
-    verdict = await runGuardWorker(command, ctx.cwd, ctx.signal);
+    evaluation = await runGuardWorkerRequest(
+      command,
+      ctx.cwd,
+      ctx.signal,
+      process.env,
+      settings.training,
+    );
   } catch (error: unknown) {
     const evaluationMs = performance.now() - evaluationStartedAt;
     if (ctx.signal?.aborted) {
@@ -74,16 +84,20 @@ export async function handleToolCall(
       };
     }
 
-    verdict = {
-      decision: "deny",
-      reason: `demur: guard worker crashed — ${errorDetail(error)}`,
-      judgments: undefined,
-      failure: "unexpected",
-      latencyMs: evaluationMs,
-      usage: undefined,
+    evaluation = {
+      verdict: {
+        decision: "deny",
+        reason: `demur: guard worker crashed — ${errorDetail(error)}`,
+        judgments: undefined,
+        failure: "unexpected",
+        latencyMs: evaluationMs,
+        usage: undefined,
+      },
+      evidence: undefined,
     };
   }
 
+  const verdict = evaluation.verdict;
   const evaluationMs = performance.now() - evaluationStartedAt;
   const inputTokens = verdict.usage?.inputTokens;
   const accumulatedCostUsd = await recordAccumulatedCost(inputTokens);
@@ -109,6 +123,7 @@ export async function handleToolCall(
       ctx,
       settings.mode,
       verdict,
+      evaluation.evidence,
       result,
     );
   }
@@ -302,6 +317,18 @@ export function runGuardWorker(
   signal: AbortSignal | undefined,
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<Verdict> {
+  return runGuardWorkerRequest(command, cwd, signal, environment, false).then(
+    (evaluation) => evaluation.verdict,
+  );
+}
+
+function runGuardWorkerRequest(
+  command: string,
+  cwd: string,
+  signal: AbortSignal | undefined,
+  environment: NodeJS.ProcessEnv,
+  includeEvidence: boolean,
+): Promise<GuardEvaluation> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(new Error("guard request cancelled"));
@@ -333,7 +360,6 @@ export function runGuardWorker(
     signal?.addEventListener("abort", abort, { once: true });
     child.stdout.on("data", (chunk: Buffer) => {
       stdout = appendBounded(stdout, chunk);
-      if (stdout.length >= MAX_WORKER_OUTPUT_BYTES) child.kill();
     });
     child.stderr.on("data", (chunk: Buffer) => {
       stderr = appendBounded(stderr, chunk);
@@ -349,7 +375,7 @@ export function runGuardWorker(
         }
 
         try {
-          resolve(parseVerdict(stdout));
+          resolve(parseGuardWorkerResponse(stdout, includeEvidence));
         } catch (error: unknown) {
           reject(new Error(`invalid guard worker response: ${errorDetail(error)}`));
         }
@@ -357,7 +383,7 @@ export function runGuardWorker(
     });
 
     child.stdin.on("error", (error) => finish(() => reject(error)));
-    child.stdin.end(JSON.stringify({ command, cwd }));
+    child.stdin.end(JSON.stringify({ command, cwd, includeEvidence }));
   });
 }
 
@@ -496,14 +522,22 @@ async function recordTrainingResult(
   ctx: ExtensionContext,
   mode: "enforce" | "passive",
   verdict: Verdict,
+  evidence: GuardEvidence | undefined,
   result: ToolCallEventResult | undefined,
 ): Promise<void> {
   try {
+    if (verdict.judgments !== undefined && evidence === undefined) {
+      ctx.ui.notify(
+        "demur: recording training evaluation without replay evidence",
+        "warning",
+      );
+    }
     await recordTrainingEvaluation({
       command,
       cwd: ctx.cwd,
       mode,
       verdict,
+      evidence,
       hostAction: result?.block === true ? "block" : "allow",
     });
   } catch (error: unknown) {
@@ -630,8 +664,36 @@ function formatDecimal(value: number, fractionDigits: number): string {
     .replace(/\.0+$/, "");
 }
 
-function parseVerdict(output: string): Verdict {
-  const value: unknown = JSON.parse(output);
+function parseGuardWorkerResponse(
+  output: string,
+  includeEvidence: boolean,
+): GuardEvaluation {
+  if (!includeEvidence) {
+    return {
+      verdict: parseVerdictValue(JSON.parse(output)),
+      evidence: undefined,
+    };
+  }
+
+  const separator = output.indexOf("\n");
+  if (separator < 0) {
+    throw new Error("training guard response did not contain a verdict line");
+  }
+
+  const verdict = parseVerdictValue(JSON.parse(output.slice(0, separator)));
+  const encodedEvidence = output.slice(separator + 1);
+  try {
+    return {
+      verdict,
+      evidence: parseGuardEvidence(JSON.parse(encodedEvidence)),
+    };
+  } catch {
+    // Training evidence is best-effort and must never change the guard verdict.
+    return { verdict, evidence: undefined };
+  }
+}
+
+function parseVerdictValue(value: unknown): Verdict {
   if (value === null || typeof value !== "object") {
     throw new Error("verdict must be an object");
   }
@@ -655,6 +717,28 @@ function parseVerdict(output: string): Verdict {
     latencyMs,
     usage: usage as Verdict["usage"],
   };
+}
+
+function parseGuardEvidence(value: unknown): GuardEvidence | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "object") {
+    throw new Error("guard evidence must be an object");
+  }
+
+  const evidence = value as Record<string, unknown>;
+  if (
+    evidence.modelState === null ||
+    typeof evidence.modelState !== "object" ||
+    typeof evidence.model !== "string" ||
+    !Number.isInteger(evidence.questionSetVersion) ||
+    !Number.isInteger(evidence.policyVersion) ||
+    evidence.policyThresholds === null ||
+    typeof evidence.policyThresholds !== "object"
+  ) {
+    throw new Error("guard evidence is incomplete");
+  }
+
+  return evidence as GuardEvidence;
 }
 
 function errorDetail(error: unknown): string {

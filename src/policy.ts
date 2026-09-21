@@ -2,6 +2,15 @@ import type { CommandAnalysis } from "./analyze.ts";
 import type { Decision, Judgments } from "./types.ts";
 
 /**
+ * Version of the policy ordering and threshold semantics.
+ *
+ * Increment this whenever composition behavior changes. Threshold values are
+ * captured separately by offline evaluation, so candidate sweeps do not need a
+ * version bump until a candidate is promoted.
+ */
+export const POLICY_VERSION = 2;
+
+/**
  * Decision thresholds applied to raw judgments.
  *
  * Policy lives here, apart from the judgments themselves, so thresholds can be
@@ -81,7 +90,7 @@ export const THRESHOLDS: Thresholds = {
   denyUnrecoverable: 0.45,
   denySharedInfrastructure: 0.5,
   denyBlastRadius: 2.0,
-  minBlastRadiusConfidence: 0.5,
+  minBlastRadiusConfidence: 0.95,
   uncertaintyBand: 0.04,
   uncertaintyBandScore: 0.12,
   staticGateMinExecution: 0.8,

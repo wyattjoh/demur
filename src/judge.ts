@@ -19,7 +19,12 @@ import {
 } from "./key.ts";
 import { COMMAND_JUDGMENTS } from "./questions.ts";
 import { renderState } from "./state.ts";
-import type { CommandState, FailureKind, Judgments } from "./types.ts";
+import type {
+  CommandState,
+  FailureKind,
+  Judgments,
+  RenderedCommandState,
+} from "./types.ts";
 
 /**
  * Default per-attempt timeout for the judgment call.
@@ -29,7 +34,10 @@ import type { CommandState, FailureKind, Judgments } from "./types.ts";
  */
 const DEFAULT_TIMEOUT_MS = 4000;
 
-const TYPESAFE_MODEL = "jev-latest";
+/**
+ * TypeSafe model used for command judgments.
+ */
+export const TYPESAFE_MODEL = "jev-latest";
 
 /**
  * Build the TypeSafe-backed Effect decision model for one API key.
@@ -90,7 +98,9 @@ export class JudgmentError extends Schema.TaggedError<JudgmentError>()(
 export class Judgment extends Context.Service<
   Judgment,
   {
-    judge(state: CommandState): Effect.Effect<JudgeSuccess, JudgmentError>;
+    judge(
+      state: RenderedCommandState,
+    ): Effect.Effect<JudgeSuccess, JudgmentError>;
   }
 >()("demur/judge/Judgment") {
   static readonly layerNoDeps = Layer.effect(
@@ -134,11 +144,11 @@ export class Judgment extends Context.Service<
       );
 
       const judge = Effect.fn("Judgment.judge")(function* (
-        state: CommandState,
+        state: RenderedCommandState,
       ): Effect.fn.Return<JudgeSuccess, JudgmentError> {
         const activeDecisionLayer = yield* getDecisionLayer();
         const result = yield* DecisionModel.decide(COMMAND_JUDGMENTS, {
-          input: renderState(state),
+          input: state,
         }).pipe(
           Effect.provide(activeDecisionLayer),
           Effect.timeout(timeoutMs),
@@ -188,8 +198,23 @@ export const judgeEffect = Effect.fn("judgeEffect")(function* (
   state: CommandState,
 ): Effect.fn.Return<JudgeSuccess, JudgmentError, Judgment> {
   const judgment = yield* Judgment;
-  return yield* judgment.judge(state);
+  return yield* judgment.judge(renderState(state));
 });
+
+/**
+ * Ask the configured judgment service about already-rendered TypeSafe state.
+ *
+ * @param state - Exact JSON state captured from an earlier invocation
+ * @returns The current question set's judgments in the Effect error channel
+ */
+export const judgeRenderedStateEffect = Effect.fn("judgeRenderedStateEffect")(
+  function* (
+    state: RenderedCommandState,
+  ): Effect.fn.Return<JudgeSuccess, JudgmentError, Judgment> {
+    const judgment = yield* Judgment;
+    return yield* judgment.judge(state);
+  },
+);
 
 const runtime = ManagedRuntime.make(Judgment.layer);
 
@@ -207,8 +232,29 @@ export function judge(
   state: CommandState,
   signal: AbortSignal | undefined = undefined,
 ): Promise<JudgeResult> {
+  return runJudgment(judgeEffect(state), signal);
+}
+
+/**
+ * Re-run the current question set against exact previously captured state.
+ *
+ * @param state - Exact model-visible state from a version-two training record
+ * @param signal - Optional cancellation signal
+ * @returns Current raw judgments or a typed failure
+ */
+export function judgeRenderedState(
+  state: RenderedCommandState,
+  signal: AbortSignal | undefined = undefined,
+): Promise<JudgeResult> {
+  return runJudgment(judgeRenderedStateEffect(state), signal);
+}
+
+function runJudgment(
+  effect: Effect.Effect<JudgeSuccess, JudgmentError, Judgment>,
+  signal: AbortSignal | undefined,
+): Promise<JudgeResult> {
   const program = Effect.gen(function* () {
-    const result = yield* Effect.result(judgeEffect(state));
+    const result = yield* Effect.result(effect);
     if (Result.isFailure(result)) {
       return {
         ok: false,

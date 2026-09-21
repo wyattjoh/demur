@@ -1,4 +1,5 @@
 import type {
+  TrainingCorrectionReason,
   TrainingRecord,
   TrainingReview,
   TrainingReviewInput,
@@ -115,22 +116,38 @@ export function filterTrainingReviewEntries(
 }
 
 /**
+ * Return the structured reason attached to a versioned review.
+ *
+ * @param review - Append-only human review revision
+ * @returns Structured reason, or undefined for accepted and legacy reviews
+ */
+export function getTrainingCorrectionReason(
+  review: TrainingReview,
+): TrainingCorrectionReason | undefined {
+  return review.version === 2 ? review.correctionReason : undefined;
+}
+
+/**
  * Build an append-only review revision from a human decision.
  *
  * @param record - Training evidence being reviewed
  * @param expectedDecision - Human-selected expected outcome
+ * @param correctionReason - Structured reason required for corrected decisions
  * @param note - Optional explanation for the human decision
  * @returns Normalized review input for persistence
  */
 export function createTrainingReviewInput(
   record: TrainingRecord,
   expectedDecision: Decision,
+  correctionReason: TrainingCorrectionReason | undefined,
   note: string | undefined,
 ): TrainingReviewInput {
+  const corrected = expectedDecision !== record.verdict.decision;
   return {
     recordId: record.id,
     originalDecision: record.verdict.decision,
     expectedDecision,
+    correctionReason: corrected ? correctionReason : undefined,
     note: note?.trim() || undefined,
   };
 }

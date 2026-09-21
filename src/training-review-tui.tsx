@@ -14,6 +14,7 @@ import {
 } from "../extensions/demur/cost-tracker.ts";
 import type { DemurSettings } from "../extensions/demur/settings.ts";
 import type {
+  TrainingCorrectionReason,
   TrainingReview,
   TrainingReviewInput,
 } from "../extensions/demur/training-store.ts";
@@ -26,6 +27,7 @@ import {
   createTrainingReviewInput,
   filterTrainingReviewEntries,
   getLatestTrainingReview,
+  getTrainingCorrectionReason,
   getTrainingReviewFilter,
   type TrainingReviewEntry,
   type TrainingReviewFilter,
@@ -61,6 +63,21 @@ const FILTERS: ReadonlyArray<{
   { value: "allow", label: "approved" },
   { value: "ask", label: "ask" },
   { value: "deny", label: "deny" },
+];
+
+const CORRECTION_REASONS: ReadonlyArray<{
+  value: TrainingCorrectionReason;
+  label: string;
+}> = [
+  { value: "inert-or-read-only", label: "Command is inert or read-only" },
+  { value: "sensitive-data", label: "Sensitive-data judgment" },
+  { value: "security-boundary", label: "Security-boundary judgment" },
+  { value: "recoverability", label: "Recoverability judgment" },
+  { value: "shared-infrastructure", label: "Local versus shared target" },
+  { value: "blast-radius", label: "Blast-radius judgment" },
+  { value: "static-uncertainty", label: "Static uncertainty gate" },
+  { value: "missing-context", label: "Model was missing objective context" },
+  { value: "service-failure", label: "TypeSafe or guard service failure" },
 ];
 
 const SECTIONS: ReadonlyArray<{ value: AppSection; label: string }> = [
@@ -112,6 +129,7 @@ type TrainingReviewAppProps = {
 type NoteEditorState = {
   recordId: string;
   expectedDecision: Decision;
+  correctionReason: TrainingCorrectionReason | undefined;
 };
 
 type AppSection = "reviews" | "settings";
@@ -277,11 +295,16 @@ export function TrainingReviewApp(
   const persistDecision = async (
     entry: TrainingReviewEntry,
     expectedDecision: Decision,
+    correctionReason: TrainingCorrectionReason | undefined,
     note: string | undefined,
   ) => {
     if (saving) return;
     const previous = getLatestTrainingReview(entry);
-    if (previous?.expectedDecision === expectedDecision) {
+    if (
+      previous?.expectedDecision === expectedDecision &&
+      correctionReason === undefined &&
+      note === undefined
+    ) {
       setNoteEditor(undefined);
       return;
     }
@@ -291,7 +314,12 @@ export function TrainingReviewApp(
     const corrected = expectedDecision !== entry.record.verdict.decision;
     try {
       const review = await props.recordReview(
-        createTrainingReviewInput(entry.record, expectedDecision, note),
+        createTrainingReviewInput(
+          entry.record,
+          expectedDecision,
+          correctionReason,
+          note,
+        ),
       );
       setSnapshot((current) =>
         current.reviews.some((existing) =>
@@ -322,13 +350,14 @@ export function TrainingReviewApp(
   const chooseDecision = (decision: Decision) => {
     if (selected === undefined || saving) return;
     if (decision === selected.record.verdict.decision) {
-      void persistDecision(selected, decision, undefined);
+      void persistDecision(selected, decision, undefined, undefined);
       return;
     }
     setError(undefined);
     setNoteEditor({
       recordId: selected.record.id,
       expectedDecision: decision,
+      correctionReason: undefined,
     });
   };
 
@@ -387,9 +416,19 @@ export function TrainingReviewApp(
         key.preventDefault();
         setNoteEditor(undefined);
         setError(undefined);
-      } else if (key.name === "tab") {
-        key.preventDefault();
+        return;
       }
+
+      if (noteEditor.correctionReason === undefined) {
+        const reason = correctionReasonForKey(key.name, key.sequence);
+        if (reason !== undefined) {
+          key.preventDefault();
+          setNoteEditor({ ...noteEditor, correctionReason: reason });
+        }
+        return;
+      }
+
+      if (key.name === "tab") key.preventDefault();
       return;
     }
 
@@ -847,6 +886,13 @@ export function TrainingReviewApp(
                           <text fg={decisionColor(review.expectedDecision)}>
                             {`${index + 1}. ${review.expectedDecision.toUpperCase()} · ${review.reviewedAt}`}
                           </text>
+                          {getTrainingCorrectionReason(review) === undefined
+                            ? null
+                            : (
+                              <text fg={COLORS.muted} wrapMode="word">
+                                {`Reason: ${correctionReasonLabel(getTrainingCorrectionReason(review)!)}`}
+                              </text>
+                            )}
                           {review.note === undefined
                             ? null
                             : <text fg={COLORS.text} wrapMode="word">{review.note}</text>}
@@ -860,31 +906,52 @@ export function TrainingReviewApp(
       </box>
 
       {noteEditor !== undefined && editingEntry !== undefined
-        ? (
-          <box
-            title={` Review revision: ${statusLabel(getTrainingReviewFilter(editingEntry))} → ${noteEditor.expectedDecision} `}
-            titleColor={decisionColor(noteEditor.expectedDecision)}
-            border
-            borderColor={decisionColor(noteEditor.expectedDecision)}
-            height={5}
-            paddingLeft={1}
-            paddingRight={1}
-            flexDirection="column"
-          >
-            <input
-              placeholder="Optional correction note — Enter saves, Esc cancels"
-              focused
-              onSubmit={(note) => {
-                void persistDecision(
-                  editingEntry,
-                  noteEditor.expectedDecision,
-                  typeof note === "string" ? note : undefined,
-                );
-              }}
-            />
-            <text fg={COLORS.muted}>Enter save revision · Esc cancel</text>
-          </box>
-        )
+        ? noteEditor.correctionReason === undefined
+          ? (
+            <box
+              title={` Why ${statusLabel(getTrainingReviewFilter(editingEntry))} → ${noteEditor.expectedDecision}? `}
+              titleColor={decisionColor(noteEditor.expectedDecision)}
+              border
+              borderColor={decisionColor(noteEditor.expectedDecision)}
+              height={CORRECTION_REASONS.length + 3}
+              paddingLeft={1}
+              paddingRight={1}
+              flexDirection="column"
+            >
+              {CORRECTION_REASONS.map((reason, index) => (
+                <text key={reason.value} fg={COLORS.text}>
+                  {`${index + 1}. ${reason.label}`}
+                </text>
+              ))}
+              <text fg={COLORS.muted}>1–9 select reason · Esc cancel</text>
+            </box>
+          )
+          : (
+            <box
+              title={` ${correctionReasonLabel(noteEditor.correctionReason)} `}
+              titleColor={decisionColor(noteEditor.expectedDecision)}
+              border
+              borderColor={decisionColor(noteEditor.expectedDecision)}
+              height={5}
+              paddingLeft={1}
+              paddingRight={1}
+              flexDirection="column"
+            >
+              <input
+                placeholder="Optional correction note — Enter saves, Esc cancels"
+                focused
+                onSubmit={(note) => {
+                  void persistDecision(
+                    editingEntry,
+                    noteEditor.expectedDecision,
+                    noteEditor.correctionReason,
+                    typeof note === "string" ? note : undefined,
+                  );
+                }}
+              />
+              <text fg={COLORS.muted}>Enter save revision · Esc cancel</text>
+            </box>
+          )
         : null}
 
       {error === undefined
@@ -1128,6 +1195,19 @@ function decisionForKey(
   if (key === "2") return "ask";
   if (key === "3") return "deny";
   return undefined;
+}
+
+function correctionReasonForKey(
+  name: string,
+  sequence: string,
+): TrainingCorrectionReason | undefined {
+  const index = Number(sequence || name) - 1;
+  return Number.isInteger(index) ? CORRECTION_REASONS[index]?.value : undefined;
+}
+
+function correctionReasonLabel(reason: TrainingCorrectionReason): string {
+  return CORRECTION_REASONS.find((candidate) => candidate.value === reason)
+    ?.label ?? reason;
 }
 
 function statusLabel(filter: TrainingReviewFilter): string {

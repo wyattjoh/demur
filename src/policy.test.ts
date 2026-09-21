@@ -44,6 +44,28 @@ describe("command policy", () => {
     assert.include(outcome.reason, "security boundary");
   });
 
+  it("asks when a destructive command has sub-threshold blast-radius confidence", () => {
+    const outcome = decide({
+      ...safeJudgments,
+      executesDestruction: 0.8,
+      blastRadiusConfidence: 0.94,
+    });
+
+    assert.strictEqual(outcome.decision, "ask");
+    assert.include(outcome.reason, "blast radius is unclear");
+  });
+
+  it("allows a contained destructive command at the confidence threshold", () => {
+    const outcome = decide({
+      ...safeJudgments,
+      executesDestruction: 0.8,
+      blastRadiusConfidence: THRESHOLDS.minBlastRadiusConfidence,
+    });
+
+    assert.strictEqual(outcome.decision, "allow");
+    assert.include(outcome.reason, "contained");
+  });
+
   it("still allows inert text when the new harmful-operation signals are low", () => {
     const outcome = decide(safeJudgments);
 

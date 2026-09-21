@@ -1,6 +1,10 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
-import { guardEffect, judgeStateEffect } from "./guard.internal.ts";
+import {
+  guardEffect,
+  guardEvaluationEffect,
+  judgeStateEffect,
+} from "./guard.internal.ts";
 import {
   Judgment,
   JudgmentError,
@@ -12,7 +16,11 @@ import {
   TypeSafeApiKey,
 } from "./key.ts";
 import { gatherStateEffect, GitCommand } from "./state.ts";
-import type { CommandState, Judgments } from "./types.ts";
+import type {
+  CommandState,
+  Judgments,
+  RenderedCommandState,
+} from "./types.ts";
 
 const safeJudgments: Judgments = {
   executesDestruction: 0,
@@ -60,7 +68,7 @@ const judgmentLayer = (
     Judgment,
     Judgment.of({
       judge: Effect.fn("TestJudgment.judge")(function* (
-        _state: CommandState,
+        _state: RenderedCommandState,
       ) {
         return yield* result;
       }),
@@ -133,6 +141,36 @@ describe("Effect guard", () => {
       assert.deepStrictEqual(verdict.judgments, safeJudgments);
       assert.deepStrictEqual(verdict.usage, { inputTokens: 12, outputTokens: 3 });
       assert.strictEqual(verdict.failure, undefined);
+    }).pipe(
+      Effect.provide(
+        guardLayer({}, Effect.succeed(successfulJudgment)),
+        { local: true },
+      ),
+    ),
+  );
+
+  it.effect("captures exact model state and implementation versions", () =>
+    Effect.gen(function* () {
+      const evaluation = yield* guardEvaluationEffect(
+        "echo safe",
+        "/workspace",
+        "cli",
+      );
+
+      assert.strictEqual(evaluation.verdict.decision, "allow");
+      assert.strictEqual(evaluation.evidence?.modelState.command, "echo safe");
+      assert.strictEqual(
+        evaluation.evidence?.modelState.working_directory,
+        "/workspace",
+      );
+      assert.strictEqual(evaluation.evidence?.model, "jev-latest");
+      assert.strictEqual(evaluation.evidence?.questionSetVersion, 2);
+      assert.strictEqual(evaluation.evidence?.policyVersion, 2);
+      assert.strictEqual(
+        evaluation.evidence?.policyThresholds.minBlastRadiusConfidence,
+        0.95,
+      );
+      assert.isDefined(evaluation.evidence?.analysis);
     }).pipe(
       Effect.provide(
         guardLayer({}, Effect.succeed(successfulJudgment)),

@@ -6,6 +6,24 @@ import type { CommandAnalysis } from "./analyze.ts";
 export type Host = "pi" | "claude-code" | "cli";
 
 /**
+ * JSON-compatible value accepted by the TypeSafe state boundary.
+ */
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | ReadonlyArray<JsonValue>
+  | { readonly [key: string]: JsonValue };
+
+/**
+ * Exact JSON object submitted as TypeSafe state for one command.
+ */
+export type RenderedCommandState = {
+  readonly [key: string]: JsonValue;
+};
+
+/**
  * Everything demur knows about a command before judging it.
  *
  * This is handed to the model verbatim as System One state, so every field is
@@ -159,4 +177,42 @@ export type Verdict = {
    * Token usage for the judgment call, when one completed.
    */
   usage: { inputTokens: number; outputTokens: number } | undefined;
+};
+
+/**
+ * Reproducible inputs and implementation versions behind one guard verdict.
+ */
+export type GuardEvidence = {
+  /**
+   * Exact JSON state submitted to TypeSafe.
+   */
+  modelState: RenderedCommandState;
+  /**
+   * Deterministic command analysis used only by the local policy gate.
+   */
+  analysis: CommandAnalysis | undefined;
+  /**
+   * TypeSafe model identifier used for the judgment.
+   */
+  model: string;
+  /**
+   * Version of the question definitions used for the judgment.
+   */
+  questionSetVersion: number;
+  /**
+   * Version of the policy composition used for the verdict.
+   */
+  policyVersion: number;
+  /**
+   * Exact numeric thresholds used for the verdict.
+   */
+  policyThresholds: { readonly [key: string]: number };
+};
+
+/**
+ * Guard verdict paired with replayable evidence when state collection occurred.
+ */
+export type GuardEvaluation = {
+  verdict: Verdict;
+  evidence: GuardEvidence | undefined;
 };
