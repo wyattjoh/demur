@@ -20,6 +20,7 @@ import demur, {
   formatEvaluationDuration,
   formatRunNotification,
   handleToolCall,
+  resolvePassiveVerdict,
   resolveVerdict,
 } from "./index.ts";
 
@@ -66,7 +67,7 @@ describe("Pi extension", () => {
     const previousConfigDirectory = process.env.XDG_CONFIG_HOME;
     process.env.XDG_CONFIG_HOME = configDirectory;
     const statuses: string[] = [];
-    const selections = ["Disable demur"];
+    const selections = ["Change mode (current: enforce)", "passive"];
     const ctx = {
       cwd: process.cwd(),
       hasUI: true,
@@ -89,22 +90,38 @@ describe("Pi extension", () => {
       }
 
       await sessionStartHandler({}, ctx);
-      assert.strictEqual(statuses.at(-1), "demur: enabled");
+      assert.strictEqual(statuses.at(-1), "demur: enforce");
 
       const configPath = getDemurConfigPath(
         { XDG_CONFIG_HOME: configDirectory },
         "/unused",
       );
       await saveDemurSettings(
-        { enabled: true, failurePolicy: "ask" },
+        { mode: "enforce", training: false, failurePolicy: "ask" },
         configPath,
       );
 
       await commandHandler("", ctx);
+      assert.strictEqual(statuses.at(-1), "demur: passive");
+      assert.deepEqual(
+        await loadDemurSettings(configPath),
+        { mode: "passive", training: false, failurePolicy: "ask" },
+      );
+
+      selections.push("Enable training capture");
+      await commandHandler("", ctx);
+      assert.strictEqual(statuses.at(-1), "demur: passive + training");
+      assert.deepEqual(
+        await loadDemurSettings(configPath),
+        { mode: "passive", training: true, failurePolicy: "ask" },
+      );
+
+      selections.push("Change mode (current: passive)", "disabled");
+      await commandHandler("", ctx);
       assert.strictEqual(statuses.at(-1), "demur: disabled");
       assert.deepEqual(
         await loadDemurSettings(configPath),
-        { enabled: false, failurePolicy: "ask" },
+        { mode: "disabled", training: false, failurePolicy: "ask" },
       );
     } finally {
       if (previousConfigDirectory === undefined) {
@@ -159,10 +176,10 @@ describe("Pi extension", () => {
       }
 
       await sessionStartHandler({}, ctx);
-      assert.strictEqual(statuses.at(-1), "demur: enabled");
+      assert.strictEqual(statuses.at(-1), "demur: enforce");
 
       await saveDemurSettings(
-        { enabled: false, failurePolicy: "ask" },
+        { mode: "disabled", training: false, failurePolicy: "ask" },
         getDemurConfigPath({ XDG_CONFIG_HOME: configDirectory }, "/unused"),
       );
       await toolCallHandler(
@@ -194,10 +211,35 @@ describe("Pi extension", () => {
 
     assert.strictEqual(
       await handleToolCall(event, context.ctx, {
-        enabled: false,
+        mode: "disabled",
+        training: false,
         failurePolicy: "block",
       }),
       undefined,
+    );
+  });
+
+  it("reports passive verdicts without prompting or blocking", () => {
+    const context = createContext(true, false);
+    const result = resolvePassiveVerdict(
+      {
+        decision: "deny",
+        reason: "demur: destructive command",
+        judgments: undefined,
+        failure: undefined,
+        latencyMs: 20,
+        usage: undefined,
+      },
+      context.ctx,
+      undefined,
+      20,
+    );
+
+    assert.strictEqual(result, undefined);
+    assert.strictEqual(context.confirmations.length, 0);
+    assert.include(
+      context.notifications.join("\n"),
+      "PASSIVE: DENY · NOT ENFORCED",
     );
   });
 
@@ -332,14 +374,16 @@ describe("Pi extension", () => {
 
     assert.strictEqual(verdict.decision, "allow");
     assert.include(verdict.reason, "disabled via DEMUR_DISABLE");
-  });
+  }, 30_000);
 });
 
 function createContext(hasUI: boolean, approved: boolean): {
   ctx: ExtensionContext;
   confirmations: string[];
+  notifications: string[];
 } {
   const confirmations: string[] = [];
+  const notifications: string[] = [];
   return {
     ctx: {
       cwd: process.cwd(),
@@ -350,9 +394,12 @@ function createContext(hasUI: boolean, approved: boolean): {
           confirmations.push(message);
           return approved;
         },
-        notify: () => {},
+        notify: (message: string) => {
+          notifications.push(message);
+        },
       },
     } as unknown as ExtensionContext,
     confirmations,
+    notifications,
   };
 }

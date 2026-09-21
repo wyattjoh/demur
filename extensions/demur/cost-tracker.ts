@@ -9,6 +9,7 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { getDemurStateDirectory } from "./paths.ts";
 
 const LOCK_RETRY_MS = 10;
 const LOCK_TIMEOUT_MS = 5_000;
@@ -31,9 +32,9 @@ export type CostTotals = {
 };
 
 /**
- * Resolve the global demur usage file according to the XDG state convention.
+ * Resolve the global demur usage file using demur-specific and XDG conventions.
  *
- * @param environment - Process environment used to resolve `XDG_STATE_HOME`
+ * @param environment - Process environment used to resolve demur and XDG overrides
  * @param homeDirectory - Home directory used when the XDG override is absent
  * @returns Absolute path to demur's usage state file
  */
@@ -41,8 +42,10 @@ export function getCostStatePath(
   environment: NodeJS.ProcessEnv = process.env,
   homeDirectory: string = homedir(),
 ): string {
-  const stateDirectory = environment.XDG_STATE_HOME || join(homeDirectory, ".local", "state");
-  return join(stateDirectory, "demur", "usage.json");
+  return join(
+    getDemurStateDirectory(environment, homeDirectory),
+    "usage.json",
+  );
 }
 
 /**
@@ -55,6 +58,17 @@ export function getCostStatePath(
  */
 export function estimateInputCostUsd(inputTokens: number): number {
   return (inputTokens * JEV_INPUT_COST_USD_PER_MILLION) / 1_000_000;
+}
+
+/**
+ * Format an estimated US-dollar cost without hiding sub-cent evaluations.
+ *
+ * @param value - Estimated cost in US dollars
+ * @returns Dollar-prefixed cost with up to nine fractional digits
+ */
+export function formatUsd(value: number): string {
+  const decimal = value.toFixed(9).replace(/0+$/, "").replace(/\.$/, "");
+  return `$${decimal}`;
 }
 
 /**
@@ -80,7 +94,7 @@ export async function recordInputCost(
   const release = await acquireLock(`${statePath}.lock`);
 
   try {
-    const current = await readTotals(statePath);
+    const current = await loadCostTotals(statePath);
     const next: CostTotals = {
       version: 1,
       totalInputTokens: current.totalInputTokens + inputTokens,
@@ -114,7 +128,18 @@ async function acquireLock(lockPath: string): Promise<() => Promise<void>> {
   }
 }
 
-async function readTotals(statePath: string): Promise<CostTotals> {
+/**
+ * Load the persisted global usage and estimated-cost totals.
+ *
+ * A missing state file represents zero recorded usage. Invalid state fails
+ * rather than returning a misleading total.
+ *
+ * @param statePath - Usage file to read
+ * @returns Persisted totals, or zero totals when the file does not exist
+ */
+export async function loadCostTotals(
+  statePath: string = getCostStatePath(),
+): Promise<CostTotals> {
   let content: string;
   try {
     content = await readFile(statePath, "utf8");
