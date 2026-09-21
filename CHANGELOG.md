@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/wyattjoh/demur/compare/v0.5.0...v0.6.0) (2026-09-21)
+
+
+### Features
+
+* add settings and training CLI ([#23](https://github.com/wyattjoh/demur/issues/23)) ([06a30ea](https://github.com/wyattjoh/demur/commit/06a30ea6209ea699a8b36e7eb21abb17e2dcbf17))
+
 ## [0.5.0](https://github.com/wyattjoh/demur/compare/v0.4.2...v0.5.0) (2026-09-21)
 
 
