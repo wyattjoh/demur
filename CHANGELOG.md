@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/wyattjoh/demur/compare/v0.6.0...v0.7.0) (2026-09-21)
+
+
+### Features
+
+* **training:** close the review feedback loop ([#25](https://github.com/wyattjoh/demur/issues/25)) ([2f67f26](https://github.com/wyattjoh/demur/commit/2f67f26adea1bbe4d99ba662d6f17688fc596c6d))
+
 ## [0.6.0](https://github.com/wyattjoh/demur/compare/v0.5.0...v0.6.0) (2026-09-21)
 
 
