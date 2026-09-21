@@ -1,6 +1,6 @@
 {
   "name": "@wyattjoh/demur",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "description": "A proof-of-concept destructive-command guard for coding agents.",
   "license": "MIT",
