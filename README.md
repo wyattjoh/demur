@@ -225,9 +225,11 @@ demur judge "git reset --hard HEAD~3"
 
 Bare `demur` opens the central OpenTUI interface when stdin and stdout are
 interactive. `demur training review` remains an explicit alias for the same
-interface. It starts in an `all` view; Tab and Shift-Tab rotate between
-`all`, `not reviewed`, `approved` (`allow`), `ask`, and `deny` views. The queue
-is focused initially: arrow keys navigate it, Up from its first result focuses a
+interface. Its header shows the persisted global estimated cost, and each queue
+row shows that evaluation's estimated input cost. It starts in an `all` view;
+Tab and Shift-Tab rotate between `all`, `not reviewed`, `approved` (`allow`),
+`ask`, and `deny` views. The queue is focused initially: arrow keys navigate it,
+Up from its first result focuses a
 fuzzy working-directory filter, and another Up focuses the tab strip. Left and
 Right select adjacent focused tabs, while Down returns through the filter to the
 queue. Right from the queue focuses the scrollable detail pane.

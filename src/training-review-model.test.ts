@@ -54,6 +54,7 @@ describe("training review model", () => {
         trainingReview("record-1", "allow", "2026-01-02T00:00:00.000Z"),
         trainingReview("record-1", "deny", "2026-01-03T00:00:00.000Z"),
       ],
+      globalEstimatedCostUsd: 0,
     });
 
     assert.strictEqual(entries[0]?.reviews.length, 2);
@@ -75,6 +76,7 @@ describe("training review model", () => {
         trainingReview("first", "allow", "2026-01-02T00:00:00.000Z"),
         trainingReview("second", "ask", "2026-01-02T00:00:00.000Z"),
       ],
+      globalEstimatedCostUsd: 0,
     });
 
     assert.deepEqual(
@@ -107,6 +109,7 @@ describe("training review model", () => {
         trainingRecord("missing", "/tmp/unmatched"),
       ],
       reviews: [],
+      globalEstimatedCostUsd: 0,
     });
 
     assert.deepEqual(

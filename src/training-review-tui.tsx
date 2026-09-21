@@ -8,6 +8,10 @@ import {
   useTerminalDimensions,
 } from "@opentui/react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  estimateInputCostUsd,
+  formatUsd,
+} from "../extensions/demur/cost-tracker.ts";
 import type {
   TrainingReview,
   TrainingReviewInput,
@@ -228,6 +232,7 @@ export function TrainingReviewApp(
           : {
             records: current.records,
             reviews: [...current.reviews, review],
+            globalEstimatedCostUsd: current.globalEstimatedCostUsd,
           }
       );
       setResult((current) => ({
@@ -444,7 +449,12 @@ export function TrainingReviewApp(
       gap={1}
     >
       <box flexDirection="row" justifyContent="space-between">
-        <text fg={COLORS.accent}><strong>demur</strong></text>
+        <box flexDirection="row" gap={1}>
+          <text fg={COLORS.accent}><strong>demur</strong></text>
+          <text fg={COLORS.muted}>
+            {`global est. ${formatUsd(snapshot.globalEstimatedCostUsd)}`}
+          </text>
+        </box>
         <text fg={COLORS.muted}>
           {`${entries.length} total · ${counts.unreviewed} new · ${counts.allow} approved · ${counts.ask} ask · ${counts.deny} deny`}
         </text>
@@ -564,7 +574,7 @@ export function TrainingReviewApp(
                         {`${entrySelected ? "▶" : " "} ${summarizeCommand(entry.record.command, horizontal ? queueSize - 6 : width - 8)}`}
                       </text>
                       <text fg={entrySelected ? COLORS.accent : COLORS.muted}>
-                        {`  ${statusLabel(getTrainingReviewFilter(entry))} · ${entry.record.mode} · ${entry.reviews.length} review${entry.reviews.length === 1 ? "" : "s"}`}
+                        {`  ${statusLabel(getTrainingReviewFilter(entry))} · ${formatEvaluationCost(entry)} · ${entry.reviews.length}r`}
                       </text>
                     </box>
                   );
@@ -918,11 +928,18 @@ function judgmentRows(
   ];
 }
 
+function formatEvaluationCost(entry: TrainingReviewEntry): string {
+  const inputTokens = entry.record.verdict.usage?.inputTokens;
+  return inputTokens === undefined
+    ? "cost n/a"
+    : formatUsd(estimateInputCostUsd(inputTokens));
+}
+
 function formatUsage(entry: TrainingReviewEntry): string {
   const usage = entry.record.verdict.usage;
   return usage === undefined
     ? ""
-    : ` · ${usage.inputTokens} input / ${usage.outputTokens} output tokens`;
+    : ` · ${usage.inputTokens} input / ${usage.outputTokens} output tokens · estimated cost ${formatUsd(estimateInputCostUsd(usage.inputTokens))}`;
 }
 
 function errorDetail(error: unknown): string {

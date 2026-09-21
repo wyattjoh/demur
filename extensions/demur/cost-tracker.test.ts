@@ -6,7 +6,9 @@ import { promisify } from "node:util";
 import { assert, describe, it } from "@effect/vitest";
 import {
   estimateInputCostUsd,
+  formatUsd,
   getCostStatePath,
+  loadCostTotals,
   recordInputCost,
   type CostTotals,
 } from "./cost-tracker.ts";
@@ -36,6 +38,27 @@ describe("Pi cost tracker", () => {
     );
   });
 
+  it("formats sub-cent estimated costs", () => {
+    assert.strictEqual(formatUsd(estimateInputCostUsd(742)), "$0.000031164");
+    assert.strictEqual(formatUsd(0), "$0");
+  });
+
+  it("loads zero totals before any usage is recorded", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "demur-cost-"));
+    const statePath = join(directory, "usage.json");
+
+    try {
+      assert.deepEqual(await loadCostTotals(statePath), {
+        version: 1,
+        totalInputTokens: 0,
+        estimatedCostUsd: 0,
+        updatedAt: new Date(0).toISOString(),
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("atomically accumulates concurrent process updates", async () => {
     const directory = await mkdtemp(join(tmpdir(), "demur-cost-"));
     const statePath = join(directory, "usage.json");
@@ -60,6 +83,7 @@ describe("Pi cost tracker", () => {
       );
 
       const totals = JSON.parse(await readFile(statePath, "utf8")) as CostTotals;
+      assert.deepEqual(await loadCostTotals(statePath), totals);
       assert.strictEqual(totals.version, 1);
       assert.strictEqual(totals.totalInputTokens, 1_000);
       assert.strictEqual(

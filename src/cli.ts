@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { createInterface } from "node:readline/promises";
 import { Predicate } from "effect";
+import { loadCostTotals } from "../extensions/demur/cost-tracker.ts";
 import {
   loadTrainingRecords,
   loadTrainingReviews,
@@ -42,6 +43,7 @@ export type CliDependencies = {
   deleteApiKey(): Promise<boolean>;
   loadTrainingRecords(): Promise<ReadonlyArray<TrainingRecord>>;
   loadTrainingReviews(): Promise<ReadonlyArray<TrainingReview>>;
+  loadGlobalEstimatedCostUsd(): Promise<number>;
   recordTrainingReview(input: TrainingReviewInput): Promise<TrainingReview>;
   runTrainingReviewTui(
     snapshot: TrainingReviewSnapshot,
@@ -70,6 +72,8 @@ const defaultDependencies: CliDependencies = {
   deleteApiKey,
   loadTrainingRecords,
   loadTrainingReviews,
+  loadGlobalEstimatedCostUsd: async () =>
+    (await loadCostTotals()).estimatedCostUsd,
   recordTrainingReview,
   runTrainingReviewTui: async (snapshot, reloadSnapshot, recordReview) => {
     const { runTrainingReviewTui } = await import(
@@ -239,11 +243,12 @@ async function runTraining(
 async function loadTrainingReviewSnapshot(
   dependencies: CliDependencies,
 ): Promise<TrainingReviewSnapshot> {
-  const [records, reviews] = await Promise.all([
+  const [records, reviews, globalEstimatedCostUsd] = await Promise.all([
     dependencies.loadTrainingRecords(),
     dependencies.loadTrainingReviews(),
+    dependencies.loadGlobalEstimatedCostUsd(),
   ]);
-  return { records, reviews };
+  return { records, reviews, globalEstimatedCostUsd };
 }
 
 async function runPlainTrainingReview(

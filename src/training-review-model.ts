@@ -11,6 +11,7 @@ import type { Decision } from "./types.ts";
 export type TrainingReviewSnapshot = {
   records: ReadonlyArray<TrainingRecord>;
   reviews: ReadonlyArray<TrainingReview>;
+  globalEstimatedCostUsd: number;
 };
 
 /**

@@ -10,6 +10,7 @@ import {
 import type { Verdict } from "../../src/types.ts";
 import {
   estimateInputCostUsd,
+  formatUsd,
   recordInputCost,
 } from "./cost-tracker.ts";
 import {
@@ -627,11 +628,6 @@ function formatDecimal(value: number, fractionDigits: number): string {
     .toFixed(fractionDigits)
     .replace(/(\.\d*?[1-9])0+$/, "$1")
     .replace(/\.0+$/, "");
-}
-
-function formatUsd(value: number): string {
-  const decimal = value.toFixed(9).replace(/0+$/, "").replace(/\.$/, "");
-  return `$${decimal}`;
 }
 
 function parseVerdict(output: string): Verdict {

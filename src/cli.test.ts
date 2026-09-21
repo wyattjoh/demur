@@ -26,6 +26,7 @@ type CliState = {
   judged: { command: string; cwd: string } | undefined;
   trainingRecords: Array<TrainingRecord>;
   trainingReviews: Array<TrainingReview>;
+  globalEstimatedCostUsd: number;
   recordedReviews: Array<TrainingReviewInput>;
   reviewInputs: Array<string>;
   interactive: boolean;
@@ -51,6 +52,7 @@ function makeDependencies(
     deleteApiKey: async () => state.deleted,
     loadTrainingRecords: async () => state.trainingRecords,
     loadTrainingReviews: async () => state.trainingReviews,
+    loadGlobalEstimatedCostUsd: async () => state.globalEstimatedCostUsd,
     recordTrainingReview: async (input) => {
       state.recordedReviews.push(input);
       return {
@@ -91,6 +93,7 @@ function makeState(
     judged: undefined,
     trainingRecords: [],
     trainingReviews: [],
+    globalEstimatedCostUsd: 0,
     recordedReviews: [],
     reviewInputs: [],
     interactive: false,
@@ -202,7 +205,11 @@ describe("demur CLI", () => {
     const exitCode = await runCli([], makeDependencies(state));
 
     assert.strictEqual(exitCode, 0);
-    assert.deepEqual(state.tuiCalls, [{ records: [], reviews: [] }]);
+    assert.deepEqual(state.tuiCalls, [{
+      records: [],
+      reviews: [],
+      globalEstimatedCostUsd: 0,
+    }]);
     assert.include(state.stdout.join("\n"), "Reviewed 0 records");
   });
 
@@ -220,6 +227,7 @@ describe("demur CLI", () => {
   it("opens the TUI by default on an interactive terminal", async () => {
     const state = makeState();
     state.interactive = true;
+    state.globalEstimatedCostUsd = 0.000_088_368;
     state.trainingRecords.push({
       version: 1,
       id: "record-1",
@@ -239,6 +247,10 @@ describe("demur CLI", () => {
     assert.strictEqual(exitCode, 0);
     assert.strictEqual(state.tuiCalls.length, 1);
     assert.strictEqual(state.tuiCalls[0]?.records[0]?.id, "record-1");
+    assert.strictEqual(
+      state.tuiCalls[0]?.globalEstimatedCostUsd,
+      0.000_088_368,
+    );
     assert.strictEqual(state.tuiReloads[0]?.records[0]?.id, "record-1");
     assert.include(state.stdout.join("\n"), "Reviewed 1 record");
   });
@@ -253,8 +265,16 @@ describe("demur CLI", () => {
     );
 
     assert.strictEqual(exitCode, 0);
-    assert.deepEqual(state.tuiCalls, [{ records: [], reviews: [] }]);
-    assert.deepEqual(state.tuiReloads, [{ records: [], reviews: [] }]);
+    assert.deepEqual(state.tuiCalls, [{
+      records: [],
+      reviews: [],
+      globalEstimatedCostUsd: 0,
+    }]);
+    assert.deepEqual(state.tuiReloads, [{
+      records: [],
+      reviews: [],
+      globalEstimatedCostUsd: 0,
+    }]);
     assert.notInclude(state.stdout.join("\n"), "No unreviewed");
     assert.include(state.stdout.join("\n"), "Reviewed 0 records");
   });

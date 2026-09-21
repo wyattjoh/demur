@@ -61,6 +61,17 @@ export function estimateInputCostUsd(inputTokens: number): number {
 }
 
 /**
+ * Format an estimated US-dollar cost without hiding sub-cent evaluations.
+ *
+ * @param value - Estimated cost in US dollars
+ * @returns Dollar-prefixed cost with up to nine fractional digits
+ */
+export function formatUsd(value: number): string {
+  const decimal = value.toFixed(9).replace(/0+$/, "").replace(/\.$/, "");
+  return `$${decimal}`;
+}
+
+/**
  * Atomically add one judgment's usage to the global accumulated estimate.
  *
  * A lock directory serializes read-modify-write operations across Pi processes.
@@ -83,7 +94,7 @@ export async function recordInputCost(
   const release = await acquireLock(`${statePath}.lock`);
 
   try {
-    const current = await readTotals(statePath);
+    const current = await loadCostTotals(statePath);
     const next: CostTotals = {
       version: 1,
       totalInputTokens: current.totalInputTokens + inputTokens,
@@ -117,7 +128,18 @@ async function acquireLock(lockPath: string): Promise<() => Promise<void>> {
   }
 }
 
-async function readTotals(statePath: string): Promise<CostTotals> {
+/**
+ * Load the persisted global usage and estimated-cost totals.
+ *
+ * A missing state file represents zero recorded usage. Invalid state fails
+ * rather than returning a misleading total.
+ *
+ * @param statePath - Usage file to read
+ * @returns Persisted totals, or zero totals when the file does not exist
+ */
+export async function loadCostTotals(
+  statePath: string = getCostStatePath(),
+): Promise<CostTotals> {
   let content: string;
   try {
     content = await readFile(statePath, "utf8");
