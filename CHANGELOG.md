@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/wyattjoh/demur/compare/v0.4.2...v0.5.0) (2026-09-21)
+
+
+### Features
+
+* add guard modes and training review ([#21](https://github.com/wyattjoh/demur/issues/21)) ([2394720](https://github.com/wyattjoh/demur/commit/239472076d88bc24757dc567fd6ca3c4c94e0f88))
+
 ## [0.4.2](https://github.com/wyattjoh/demur/compare/v0.4.1...v0.4.2) (2026-09-20)
 
 
