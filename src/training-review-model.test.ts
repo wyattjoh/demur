@@ -119,10 +119,25 @@ describe("training review model", () => {
     );
   });
 
-  it("normalizes correction notes for append-only review revisions", () => {
+  it("normalizes notes for accepted and corrected review revisions", () => {
+    const record = trainingRecord("record-1", "/workspace");
+
     assert.deepEqual(
       createTrainingReviewInput(
-        trainingRecord("record-1", "/workspace"),
+        record,
+        "allow",
+        "  verified read-only operation  ",
+      ),
+      {
+        recordId: "record-1",
+        originalDecision: "allow",
+        expectedDecision: "allow",
+        note: "verified read-only operation",
+      },
+    );
+    assert.deepEqual(
+      createTrainingReviewInput(
+        record,
         "deny",
         "  would destroy unpushed work  ",
       ),

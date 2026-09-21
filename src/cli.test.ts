@@ -280,6 +280,36 @@ describe("demur CLI", () => {
     assert.include(state.stdout.join("\n"), "Recorded DENY review");
   });
 
+  it("preserves a note when accepting the model decision", async () => {
+    const state = makeState();
+    state.trainingRecords.push(
+      makeTrainingRecord("record-1", "printf ok", "/workspace"),
+    );
+
+    const exitCode = await runCli(
+      [
+        "training",
+        "review",
+        "record-1",
+        "--decision=allow",
+        "--note=verified read-only operation",
+        "--json",
+      ],
+      makeDependencies(state),
+    );
+
+    const payload = JSON.parse(state.stdout[0] ?? "");
+    assert.strictEqual(exitCode, 0);
+    assert.strictEqual(
+      state.recordedReviews[0]?.note,
+      "verified read-only operation",
+    );
+    assert.strictEqual(
+      payload.result.review.note,
+      "verified read-only operation",
+    );
+  });
+
   it("returns a versioned JSON review result with prior revision", async () => {
     const state = makeState();
     state.trainingRecords.push(
