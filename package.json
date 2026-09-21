@@ -38,6 +38,7 @@
     "src/policy.ts",
     "src/questions.ts",
     "src/state.ts",
+    "src/settings-model.ts",
     "src/training-review-model.ts",
     "src/training-review-tui.tsx",
     "src/types.ts"
@@ -51,7 +52,7 @@
   },
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run && bun test ./src/training-review-tui.bun.tsx",
     "build:pi": "bun build extensions/demur/index.ts --target=node --outfile=dist/demur-guard.js --format=esm --external @earendil-works/pi-coding-agent && bun build src/adapters/pi-worker.ts --target=bun --outfile=dist/demur-pi-worker.js --format=esm",
     "build:claude": "bun build src/adapters/claude-code.ts --target=bun --outfile=dist/demur-hook.js --format=esm",
     "build": "bun run build:pi && bun run build:claude",

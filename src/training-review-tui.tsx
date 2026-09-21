@@ -12,10 +12,15 @@ import {
   estimateInputCostUsd,
   formatUsd,
 } from "../extensions/demur/cost-tracker.ts";
+import type { DemurSettings } from "../extensions/demur/settings.ts";
 import type {
   TrainingReview,
   TrainingReviewInput,
 } from "../extensions/demur/training-store.ts";
+import {
+  changeDemurSetting,
+  type DemurSettingKey,
+} from "./settings-model.ts";
 import {
   buildTrainingReviewEntries,
   createTrainingReviewInput,
@@ -38,8 +43,11 @@ const COLORS = {
   text: "#eceff4",
   muted: "#8f98a8",
   allow: "#a3be8c",
+  allowMuted: "#78906a",
   ask: "#ebcb8b",
+  askMuted: "#a28f68",
   deny: "#bf616a",
+  denyMuted: "#87515a",
   selection: "#2e3440",
   error: "#ff6b7a",
 } as const;
@@ -55,6 +63,33 @@ const FILTERS: ReadonlyArray<{
   { value: "deny", label: "deny" },
 ];
 
+const SECTIONS: ReadonlyArray<{ value: AppSection; label: string }> = [
+  { value: "reviews", label: "Reviews" },
+  { value: "settings", label: "Settings" },
+];
+
+const SETTING_ROWS: ReadonlyArray<{
+  key: DemurSettingKey;
+  label: string;
+  description: string;
+}> = [
+  {
+    key: "mode",
+    label: "Operating mode",
+    description: "Enforce decisions, observe passively, or bypass the guard.",
+  },
+  {
+    key: "training",
+    label: "Training capture",
+    description: "Append full evaluations for later human review.",
+  },
+  {
+    key: "failurePolicy",
+    label: "Failure policy",
+    description: "Action when no trustworthy judgment is available.",
+  },
+];
+
 /**
  * Summary returned after an interactive training-review session.
  */
@@ -66,8 +101,10 @@ export type TrainingReviewTuiResult = {
 
 type TrainingReviewAppProps = {
   snapshot: TrainingReviewSnapshot;
+  settings: DemurSettings;
   reloadSnapshot(): Promise<TrainingReviewSnapshot>;
   recordReview(input: TrainingReviewInput): Promise<TrainingReview>;
+  saveSettings(settings: DemurSettings): Promise<void>;
   pollIntervalMs: number | undefined;
   onExit(result: TrainingReviewTuiResult): void;
 };
@@ -77,7 +114,15 @@ type NoteEditorState = {
   expectedDecision: Decision;
 };
 
-type FocusTarget = "tabs" | "filter" | "queue" | "detail";
+type AppSection = "reviews" | "settings";
+
+type FocusTarget =
+  | "sections"
+  | "tabs"
+  | "filter"
+  | "queue"
+  | "detail"
+  | "settings";
 
 /**
  * Render the interactive historical training-review queue.
@@ -93,6 +138,11 @@ export function TrainingReviewApp(
   const [snapshot, setSnapshot] = useState<TrainingReviewSnapshot>(
     props.snapshot,
   );
+  const [section, setSection] = useState<AppSection>("reviews");
+  const [settings, setSettings] = useState<DemurSettings>(props.settings);
+  const [selectedSettingIndex, setSelectedSettingIndex] = useState(0);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | undefined>();
   const [activeFilter, setActiveFilter] = useState<TrainingReviewFilter>(
     "all",
   );
@@ -147,7 +197,7 @@ export function TrainingReviewApp(
     : Math.max(7, Math.min(11, Math.floor(height * 0.32)));
   const queuePageSize = Math.max(
     1,
-    Math.floor((horizontal ? height - 13 : queueSize - 2) / 2),
+    Math.floor((horizontal ? height - 16 : queueSize - 2) / 2),
   );
   useEffect(() => {
     const timer = setTimeout(() => setReady(true), 250);
@@ -202,6 +252,26 @@ export function TrainingReviewApp(
 
   const finish = (nextResult: TrainingReviewTuiResult) => {
     props.onExit(nextResult);
+  };
+
+  const persistSetting = async (
+    key: DemurSettingKey,
+    direction: number,
+  ) => {
+    if (savingSettings) return;
+    const nextSettings = changeDemurSetting(settings, key, direction);
+    if (nextSettings === settings) return;
+
+    setSavingSettings(true);
+    setSettingsError(undefined);
+    try {
+      await props.saveSettings(nextSettings);
+      setSettings(nextSettings);
+    } catch (cause: unknown) {
+      setSettingsError(errorDetail(cause));
+    } finally {
+      setSavingSettings(false);
+    }
   };
 
   const persistDecision = async (
@@ -323,6 +393,73 @@ export function TrainingReviewApp(
       return;
     }
 
+    const sectionKey = key.sequence || key.name;
+    if (focus !== "filter" && (sectionKey === "[" || sectionKey === "]")) {
+      key.preventDefault();
+      const nextSection = sectionKey === "[" ? "reviews" : "settings";
+      setSection(nextSection);
+      setFocus(nextSection === "reviews" ? "tabs" : "settings");
+      return;
+    }
+
+    if (focus === "sections") {
+      if (key.name === "left" || key.name === "right") {
+        key.preventDefault();
+        setSection((current) =>
+          current === "reviews" ? "settings" : "reviews"
+        );
+        return;
+      }
+      if (key.name === "down" || key.name === "return") {
+        key.preventDefault();
+        setFocus(section === "reviews" ? "tabs" : "settings");
+        return;
+      }
+      if (key.name === "q" || key.name === "escape") {
+        key.preventDefault();
+        finish(result);
+      }
+      return;
+    }
+
+    if (section === "settings") {
+      if (key.name === "q" || key.name === "escape") {
+        key.preventDefault();
+        finish(result);
+        return;
+      }
+      if (key.name === "up") {
+        key.preventDefault();
+        if (selectedSettingIndex === 0) {
+          setFocus("sections");
+        } else {
+          setSelectedSettingIndex((current) => current - 1);
+        }
+        return;
+      }
+      if (key.name === "down") {
+        key.preventDefault();
+        setSelectedSettingIndex((current) =>
+          Math.min(current + 1, SETTING_ROWS.length - 1)
+        );
+        return;
+      }
+      if (
+        key.name === "left" ||
+        key.name === "right" ||
+        key.name === "return" ||
+        key.name === "space" ||
+        key.sequence === " "
+      ) {
+        key.preventDefault();
+        const row = SETTING_ROWS[selectedSettingIndex];
+        if (row !== undefined) {
+          void persistSetting(row.key, key.name === "left" ? -1 : 1);
+        }
+      }
+      return;
+    }
+
     if (key.name === "tab") {
       key.preventDefault();
       rotateFilter(key.shift);
@@ -330,6 +467,11 @@ export function TrainingReviewApp(
     }
 
     if (focus === "tabs") {
+      if (key.name === "up") {
+        key.preventDefault();
+        setFocus("sections");
+        return;
+      }
       if (key.name === "left" || key.name === "right") {
         key.preventDefault();
         moveFilterSelection(key.name === "left" ? -1 : 1);
@@ -461,6 +603,42 @@ export function TrainingReviewApp(
       </box>
 
       <box
+        title=" View "
+        titleColor={focus === "sections" ? COLORS.accent : COLORS.muted}
+        flexDirection="row"
+        gap={1}
+        border
+        borderColor={focus === "sections" ? COLORS.accent : COLORS.border}
+        backgroundColor={COLORS.panel}
+        height={3}
+        paddingLeft={1}
+        paddingRight={1}
+      >
+        {SECTIONS.map((candidate) => {
+          const active = candidate.value === section;
+          return (
+            <text
+              key={candidate.value}
+              fg={active ? COLORS.accent : COLORS.muted}
+              bg={active ? COLORS.selection : COLORS.background}
+              onMouseDown={() => {
+                setSection(candidate.value);
+                setFocus("sections");
+              }}
+            >
+              {` ${candidate.label} `}
+            </text>
+          );
+        })}
+        <text fg={COLORS.muted}>[ / ] switch · Up to focus · ←/→ switch</text>
+      </box>
+
+      {section === "reviews"
+        ? (
+          <>
+      <box
+        title=" Review status "
+        titleColor={focus === "tabs" ? COLORS.accent : COLORS.muted}
         flexDirection="row"
         gap={1}
         border
@@ -568,13 +746,28 @@ export function TrainingReviewApp(
                         setFocus("queue");
                       }}
                     >
-                      <text fg={entrySelected
-                        ? statusColor(getTrainingReviewFilter(entry))
-                        : COLORS.text}>
+                      <text
+                        fg={entrySelected
+                          ? statusColor(getTrainingReviewFilter(entry))
+                          : COLORS.text}
+                        wrapMode="none"
+                        truncate
+                      >
                         {`${entrySelected ? "▶" : " "} ${summarizeCommand(entry.record.command, horizontal ? queueSize - 6 : width - 8)}`}
                       </text>
-                      <text fg={entrySelected ? COLORS.accent : COLORS.muted}>
-                        {`  ${statusLabel(getTrainingReviewFilter(entry))} · ${formatEvaluationCost(entry)} · ${entry.reviews.length}r`}
+                      <text
+                        fg={entrySelected ? COLORS.accent : COLORS.muted}
+                        wrapMode="none"
+                        truncate
+                      >
+                        {`  ${statusLabel(getTrainingReviewFilter(entry))} · `}
+                        <span
+                          fg={mutedDecisionColor(
+                            entry.record.verdict.decision,
+                          )}
+                        >
+                          {entry.record.verdict.decision.toUpperCase()}
+                        </span>
                       </text>
                     </box>
                   );
@@ -704,7 +897,7 @@ export function TrainingReviewApp(
       <box flexDirection="row" justifyContent="space-between">
         <text fg={COLORS.muted}>
           {focus === "tabs"
-            ? "←/→ select status · Down/Enter filter · Tab rotates"
+            ? "←/→ select status · Up sections · Down/Enter filter · Tab rotates"
             : focus === "filter"
             ? "Type to fuzzy-search cwd · Up tabs · Down/Enter queue · Tab rotates"
             : focus === "detail"
@@ -715,6 +908,81 @@ export function TrainingReviewApp(
           {saving ? "Saving…" : "q/Esc quit"}
         </text>
       </box>
+          </>
+        )
+        : (
+          <>
+            <box
+              title=" Pi extension settings "
+              titleColor={COLORS.accent}
+              border
+              borderColor={COLORS.accent}
+              backgroundColor={COLORS.panel}
+              flexGrow={1}
+              flexDirection="column"
+              padding={1}
+              gap={1}
+            >
+              <text fg={COLORS.muted} wrapMode="word">
+                Changes are saved globally and picked up by Pi before its next Bash call.
+              </text>
+              {SETTING_ROWS.map((row, index) => {
+                const selectedRow = index === selectedSettingIndex;
+                const unavailable = row.key === "training" &&
+                  settings.mode === "disabled";
+                return (
+                  <box
+                    key={row.key}
+                    flexDirection="column"
+                    backgroundColor={selectedRow
+                      ? COLORS.selection
+                      : COLORS.panel}
+                    paddingLeft={1}
+                    paddingRight={1}
+                    onMouseDown={() => {
+                      setSelectedSettingIndex(index);
+                      setFocus("settings");
+                    }}
+                  >
+                    <box flexDirection="row">
+                      <text
+                        width={24}
+                        fg={selectedRow ? COLORS.accent : COLORS.text}
+                      >
+                        {`${selectedRow ? "▶" : " "} ${row.label}`}
+                      </text>
+                      <text fg={unavailable ? COLORS.muted : COLORS.allow}>
+                        {settingDisplayValue(settings, row.key)}
+                      </text>
+                    </box>
+                    <text fg={COLORS.muted} wrapMode="word">
+                      {unavailable
+                        ? "Unavailable while the operating mode is disabled."
+                        : row.description}
+                    </text>
+                  </box>
+                );
+              })}
+            </box>
+
+            {settingsError === undefined
+              ? null
+              : (
+                <text fg={COLORS.error}>
+                  Could not save settings: {settingsError}
+                </text>
+              )}
+
+            <box flexDirection="row" justifyContent="space-between">
+              <text fg={COLORS.muted}>
+                ↑/↓ select · ←/→ change · Enter/Space next · [ reviews
+              </text>
+              <text fg={savingSettings ? COLORS.ask : COLORS.muted}>
+                {savingSettings ? "Saving…" : "q/Esc quit"}
+              </text>
+            </box>
+          </>
+        )}
     </box>
   );
 }
@@ -766,14 +1034,18 @@ function JudgmentsTable(props: { entry: TrainingReviewEntry }): React.ReactNode 
  * Launch OpenTUI for complete training history and restore the terminal on exit.
  *
  * @param snapshot - Complete training state to present initially
+ * @param settings - Current globally persisted Pi extension settings
  * @param reloadSnapshot - Polling callback that returns current training state
  * @param recordReview - Persistence callback for review revisions
+ * @param saveSettings - Atomic persistence callback for Pi extension settings
  * @returns Counts for the completed interactive session
  */
 export async function runTrainingReviewTui(
   snapshot: TrainingReviewSnapshot,
+  settings: DemurSettings,
   reloadSnapshot: () => Promise<TrainingReviewSnapshot>,
   recordReview: (input: TrainingReviewInput) => Promise<TrainingReview>,
+  saveSettings: (settings: DemurSettings) => Promise<void>,
 ): Promise<TrainingReviewTuiResult> {
   const renderer = await createCliRenderer({
     exitOnCtrlC: false,
@@ -796,13 +1068,24 @@ export async function runTrainingReviewTui(
     root.render(
       <TrainingReviewApp
         snapshot={snapshot}
+        settings={settings}
         reloadSnapshot={reloadSnapshot}
         recordReview={recordReview}
+        saveSettings={saveSettings}
         pollIntervalMs={undefined}
         onExit={finish}
       />,
     );
   });
+}
+
+function settingDisplayValue(
+  settings: DemurSettings,
+  key: DemurSettingKey,
+): string {
+  if (key === "mode") return settings.mode;
+  if (key === "training") return settings.training ? "on" : "off";
+  return settings.failurePolicy;
 }
 
 function countByFilter(
@@ -871,6 +1154,14 @@ function decisionColor(decision: Decision): string {
   }[decision];
 }
 
+function mutedDecisionColor(decision: Decision): string {
+  return {
+    allow: COLORS.allowMuted,
+    ask: COLORS.askMuted,
+    deny: COLORS.denyMuted,
+  }[decision];
+}
+
 function emptyTitle(
   entries: ReadonlyArray<TrainingReviewEntry>,
   cwdQuery: string,
@@ -926,13 +1217,6 @@ function judgmentRows(
       value: judgments.blastRadiusConfidence.toFixed(2),
     },
   ];
-}
-
-function formatEvaluationCost(entry: TrainingReviewEntry): string {
-  const inputTokens = entry.record.verdict.usage?.inputTokens;
-  return inputTokens === undefined
-    ? "cost n/a"
-    : formatUsd(estimateInputCostUsd(inputTokens));
 }
 
 function formatUsage(entry: TrainingReviewEntry): string {
