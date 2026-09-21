@@ -48,11 +48,13 @@ or sensitive names. Review TypeSafe's service terms and data-handling policy
 before enabling demur in a sensitive repository. Do not run secrets directly in
 shell arguments when the guard is active.
 
-Pi training capture stores the complete command, working directory, operating
-mode, full verdict and judgments, and resulting host action locally. These
-records can therefore contain secrets or sensitive names from shell arguments
-and paths. Training capture is off by default and is unavailable while the Pi
-integration is disabled.
+Pi training capture stores the complete command, exact TypeSafe state, local
+static-analysis result, model/question/policy versions, exact policy thresholds,
+operating mode, full verdict and judgments, and resulting host action locally.
+These records can therefore contain secrets or sensitive names from shell
+arguments, paths, Git
+context, and deterministic command analysis. Training capture is off by default
+and is unavailable while the Pi integration is disabled.
 
 ## Requirements
 
@@ -111,7 +113,9 @@ pi
 The extension intercepts `bash` tool calls. Because Pi runs extensions under
 Node.js while demur uses `Bun.secrets`, the extension launches a package-local
 Bun worker for each judgment. The API key remains inside that worker; only the
-command request and resulting verdict cross its local stdio pipes. `ask` opens
+command request and resulting verdict cross its local stdio pipes. When training
+capture is enabled, the exact model state and local policy evidence return with
+the verdict for private local persistence. `ask` opens
 an interactive confirmation dialog; without an interactive UI, demur blocks the
 command.
 
@@ -166,8 +170,11 @@ Set `DEMUR_STATE_HOME` to place `usage.json`, `training.jsonl`, and
 demur-specific override takes precedence over the XDG and home-directory
 locations. Training records are retained until the user removes them. Human
 reviews are appended separately; accepted and corrected records are linked by a
-stable record ID, leaving the original evidence unchanged. A training-write
-failure is reported but never changes whether the command runs.
+stable record ID, leaving the original evidence unchanged. Corrected reviews
+also carry a machine-readable reason so recurring question, context, policy, and
+service failures can be measured without mining free-form notes. Version-one
+records and reviews remain readable. A training-write failure is reported but
+never changes whether the command runs.
 
 Pi packages execute with the user's full system permissions. Review this
 repository before installing it.
@@ -220,7 +227,8 @@ demur auth logout
 demur training review
 demur training list --status=unreviewed --cwd=/workspace
 demur training list --status=deny --json
-demur training review <record-id> --decision=deny --note="would destroy work" --json
+demur training evaluate --json
+demur training review <record-id> --decision=deny --reason=recoverability --note="would destroy work" --json
 demur judge "git reset --hard HEAD~3"
 ```
 
@@ -249,18 +257,22 @@ and Page Down page within the focused pane, and queue navigation stops at its
 first and last entries. Mouse clicks select tabs, records, the filter, or either
 pane; the wheel scrolls the queue and detail pane. Enter selects the original
 decision, `1`/`2`/`3` choose `allow`/`ask`/`deny`, `s`
-leaves a record for a later pass, and `q` or Escape stops. Previously reviewed
-records remain available, and changing an answer appends a review revision while
-preserving its visible history. The TUI remains open when a view is empty and
+leaves a record for a later pass, and `q` or Escape stops. A correction first
+asks for one structured reason, then accepts an optional note. Previously
+reviewed records remain available, and changing an answer appends a review
+revision while preserving its visible history. The TUI remains open when a view is empty and
 polls training state for newly captured or externally reviewed evaluations.
 
 Flag-based training commands provide the same review operations without the
 TUI. `demur training list` accepts `--status` and fuzzy `--cwd` filters. Status
 is derived from the latest human review, so `allow`, `ask`, and `deny` select
 reviewed records while `unreviewed` selects records without a review. Record a
-new append-only review revision by passing a record ID, a required
-`--decision=<allow|ask|deny>`, and an optional `--note`. Add `--json` to either
-operation to emit one versioned JSON document; JSON failures are written to
+new append-only review revision by passing a record ID and a required
+`--decision=<allow|ask|deny>`. Corrections also require `--reason` with one of
+`inert-or-read-only`, `sensitive-data`, `security-boundary`, `recoverability`,
+`shared-infrastructure`, `blast-radius`, `static-uncertainty`, `missing-context`,
+or `service-failure`; `--note` remains optional. Add `--json` to list, evaluate,
+or review to emit one versioned JSON document; JSON failures are written to
 stdout with a nonzero exit code. Interactive `demur training review` still opens
 the TUI, but without a terminal it requires an explicit list or record-ID review
 operation. Reviews remain separate from the original evidence so they can later
@@ -325,10 +337,35 @@ and deterministic policy controls alongside demur.
 - `src/guard.internal.ts` — Effect-native orchestration and fail-closed recovery
 - `src/guard.ts` — managed runtime and Promise boundary
 - `src/training-review-model.ts` — historical review status and cwd filtering
+- `src/training-evaluation.ts` — offline correction metrics and threshold comparisons
 - `src/training-review-tui.tsx` — interactive OpenTUI training-review queue
 - `extensions/demur/` — Pi `tool_call` integration and training-state storage
 - `src/adapters/claude-code.ts` — Claude Code `PreToolUse` integration
 - `eval/` — safe synthetic contrast cases and the live evaluation runner
+
+## Training feedback evaluation
+
+`demur training evaluate` joins each record with its latest review and replays
+stored raw judgments through the shared `decide()` policy. By default it makes
+no TypeSafe requests. The report includes a decision matrix, an asymmetric weighted loss
+that penalizes unsafe false allows most heavily, correction counts grouped by
+structured reason, replay fidelity, and up to five single-threshold candidates
+that improve the observed records.
+
+Candidates are exploratory and are never applied automatically. The command
+scores them on the same private records used to discover them, so validate a
+candidate on an independent holdout and the synthetic corpus before changing
+`THRESHOLDS`. Newly captured version-two records include the exact model state
+and static-gate analysis required for complete replay; legacy records support
+policy-only replay.
+
+Pass `--replay` explicitly to send reviewed version-two records' previously
+captured model state to TypeSafe again using the current question set. This is a
+cost-bearing operation and re-discloses the stored command and context described
+above. It is capped at 20 requests by default; use `--limit=<1-100>` to choose a
+different bound. Commands remain data and are never executed. The replay report shows
+improvements, regressions, failures, token usage, and per-record raw judgments;
+use it when changing one question at a time.
 
 ## Synthetic evaluation
 

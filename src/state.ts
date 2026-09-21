@@ -1,17 +1,13 @@
 import { Context, Effect, Layer, Option, Schema } from "effect";
 import { analyze, type CommandAnalysis } from "./analyze.ts";
 import { Environment } from "./key.ts";
-import type { CommandState, GitState, Host } from "./types.ts";
-
-/**
- * A JSON object accepted by the Effect decision model as System One state.
- */
-type JsonObject = { [key: string]: JsonValue };
-
-/**
- * Any JSON-compatible value.
- */
-type JsonValue = string | number | boolean | null | JsonValue[] | JsonObject;
+import type {
+  CommandState,
+  GitState,
+  Host,
+  JsonValue,
+  RenderedCommandState,
+} from "./types.ts";
 
 /**
  * Milliseconds to wait for git before giving up and judging without it.
@@ -204,8 +200,8 @@ export function gatherState(
  * @param state - Collected command state
  * @returns A plain JSON object suitable for the `state` field
  */
-export function renderState(state: CommandState): JsonObject {
-  const out: JsonObject = {
+export function renderState(state: CommandState): RenderedCommandState {
+  const out: { [key: string]: JsonValue } = {
     command: state.command,
     working_directory: state.cwd,
     requesting_agent: state.agent,
@@ -245,11 +241,13 @@ export function renderState(state: CommandState): JsonObject {
  * @param analysis - Analysis produced by {@link analyze}
  * @returns A JSON object describing what code determined
  */
-export function renderAnalysis(analysis: CommandAnalysis): JsonObject {
-  const out: JsonObject = {
+export function renderAnalysis(
+  analysis: CommandAnalysis,
+): RenderedCommandState {
+  const out: { [key: string]: JsonValue } = {
     note: "A breakdown of what this command will do when it runs. `program` is the executable that will actually be invoked, after removing quotes and stripping wrappers such as env or sudo. `paths` are resolved for ~, $TMPDIR, and .. before being located. Every command listed here executes.",
     commands: analysis.segments.map((segment) => {
-      const entry: JsonObject = {
+      const entry: { [key: string]: JsonValue } = {
         program: segment.argv0 ?? "(could not determine)",
         arguments: segment.args,
       };

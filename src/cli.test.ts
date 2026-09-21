@@ -8,7 +8,7 @@ import type {
 import { runCli, type CliDependencies } from "./cli.ts";
 import type { ResolvedApiKey } from "./key.ts";
 import type { TrainingReviewSnapshot } from "./training-review-model.ts";
-import type { Verdict } from "./types.ts";
+import type { RenderedCommandState, Verdict } from "./types.ts";
 
 const allowedVerdict: Verdict = {
   decision: "allow",
@@ -37,12 +37,43 @@ function makeTrainingRecord(
   };
 }
 
+function makeReplayableTrainingRecord(
+  id: string,
+  command: string,
+  cwd: string,
+): TrainingRecord {
+  return {
+    version: 2,
+    id,
+    recordedAt: "2026-01-01T00:00:00.000Z",
+    command,
+    cwd,
+    mode: "passive",
+    verdict: { ...allowedVerdict },
+    evidence: {
+      modelState: {
+        command,
+        working_directory: cwd,
+        requesting_agent: "pi",
+        version_control: "Not inside a git repository.",
+      },
+      analysis: undefined,
+      model: "jev-latest",
+      questionSetVersion: 1,
+      policyVersion: 1,
+      policyThresholds: { executesDestruction: 0.3 },
+    },
+    hostAction: "allow",
+  };
+}
+
 type CliState = {
   resolved: ResolvedApiKey | undefined;
   stored: string | undefined;
   deleted: boolean;
   promptCalls: number;
   judged: { command: string; cwd: string } | undefined;
+  judgedTrainingStates: Array<RenderedCommandState>;
   trainingRecords: Array<TrainingRecord>;
   trainingReviews: Array<TrainingReview>;
   globalEstimatedCostUsd: number;
@@ -66,6 +97,22 @@ function makeDependencies(
       state.judged = { command, cwd };
       return allowedVerdict;
     },
+    judgeTrainingState: async (renderedState) => {
+      state.judgedTrainingStates.push(renderedState);
+      return {
+        ok: true,
+        judgments: {
+          executesDestruction: 0,
+          exposesSensitiveData: 0,
+          weakensSecurityBoundary: 0,
+          unrecoverable: 0,
+          targetsSharedInfrastructure: 0,
+          blastRadius: 0,
+          blastRadiusConfidence: 1,
+        },
+        usage: { inputTokens: 10, outputTokens: 2 },
+      };
+    },
     resolveApiKey: async () => state.resolved,
     storeApiKey: async (value) => {
       state.stored = value;
@@ -77,7 +124,7 @@ function makeDependencies(
     recordTrainingReview: async (input) => {
       state.recordedReviews.push(input);
       return {
-        version: 1,
+        version: 2,
         reviewedAt: "2026-01-02T00:00:00.000Z",
         ...input,
       };
@@ -116,6 +163,7 @@ function makeState(
     deleted: false,
     promptCalls: 0,
     judged: undefined,
+    judgedTrainingStates: [],
     trainingRecords: [],
     trainingReviews: [],
     globalEstimatedCostUsd: 0,
@@ -265,6 +313,7 @@ describe("demur CLI", () => {
         "record-1",
         "--decision",
         "deny",
+        "--reason=recoverability",
         "--note=would destroy unpushed work",
       ],
       makeDependencies(state),
@@ -275,9 +324,103 @@ describe("demur CLI", () => {
       recordId: "record-1",
       originalDecision: "allow",
       expectedDecision: "deny",
+      correctionReason: "recoverability",
       note: "would destroy unpushed work",
     }]);
     assert.include(state.stdout.join("\n"), "Recorded DENY review");
+  });
+
+  it("requires a structured reason for corrected reviews", async () => {
+    const state = makeState();
+    state.trainingRecords.push(
+      makeTrainingRecord("record-1", "printf ok", "/workspace"),
+    );
+
+    const exitCode = await runCli(
+      [
+        "training",
+        "review",
+        "record-1",
+        "--decision=deny",
+        "--json",
+      ],
+      makeDependencies(state),
+    );
+
+    const payload = JSON.parse(state.stdout[0] ?? "");
+    assert.strictEqual(exitCode, 2);
+    assert.strictEqual(payload.ok, false);
+    assert.include(payload.error.message, "require `--reason`");
+    assert.deepEqual(state.recordedReviews, []);
+  });
+
+  it("evaluates reviewed judgments without another model call", async () => {
+    const state = makeState();
+    const record = makeTrainingRecord("record-1", "printf ok", "/workspace");
+    record.verdict.judgments = {
+      executesDestruction: 0,
+      exposesSensitiveData: 0,
+      weakensSecurityBoundary: 0,
+      unrecoverable: 0,
+      targetsSharedInfrastructure: 0,
+      blastRadius: 0,
+      blastRadiusConfidence: 1,
+    };
+    state.trainingRecords.push(record);
+    state.trainingReviews.push({
+      version: 2,
+      recordId: "record-1",
+      reviewedAt: "2026-01-02T00:00:00.000Z",
+      originalDecision: "allow",
+      expectedDecision: "allow",
+      correctionReason: undefined,
+      note: undefined,
+    });
+
+    const exitCode = await runCli(
+      ["training", "evaluate", "--json"],
+      makeDependencies(state),
+    );
+
+    const payload = JSON.parse(state.stdout[0] ?? "");
+    assert.strictEqual(exitCode, 0);
+    assert.strictEqual(payload.operation, "training.evaluate");
+    assert.strictEqual(payload.result.current.matches, 1);
+    assert.strictEqual(payload.result.current.weightedLoss, 0);
+    assert.strictEqual(state.judged, undefined);
+    assert.deepEqual(state.judgedTrainingStates, []);
+  });
+
+  it("explicitly replays exact captured state through current questions", async () => {
+    const state = makeState();
+    state.trainingRecords.push(
+      makeReplayableTrainingRecord("record-1", "printf ok", "/workspace"),
+    );
+    state.trainingReviews.push({
+      version: 2,
+      recordId: "record-1",
+      reviewedAt: "2026-01-02T00:00:00.000Z",
+      originalDecision: "allow",
+      expectedDecision: "allow",
+      correctionReason: undefined,
+      note: undefined,
+    });
+
+    const exitCode = await runCli(
+      ["training", "evaluate", "--replay", "--json"],
+      makeDependencies(state),
+    );
+
+    const payload = JSON.parse(state.stdout[0] ?? "");
+    assert.strictEqual(exitCode, 0);
+    assert.strictEqual(payload.result.replay.metrics.matches, 1);
+    assert.strictEqual(payload.result.replay.inputTokens, 10);
+    assert.deepEqual(state.judgedTrainingStates, [{
+      command: "printf ok",
+      working_directory: "/workspace",
+      requesting_agent: "pi",
+      version_control: "Not inside a git repository.",
+    }]);
   });
 
   it("preserves a note when accepting the model decision", async () => {
@@ -330,6 +473,7 @@ describe("demur CLI", () => {
         "review",
         "record-1",
         "--decision=ask",
+        "--reason=missing-context",
         "--note",
         "needs confirmation",
         "--json",

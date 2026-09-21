@@ -6,13 +6,90 @@ import {
   Predicate,
   Result,
 } from "effect";
-import { judgeEffect, Judgment } from "./judge.ts";
+import { judgeEffect, Judgment, TYPESAFE_MODEL } from "./judge.ts";
 import { Environment } from "./key.ts";
-import { applyStaticGate, decide } from "./policy.ts";
-import { gatherStateEffect, GitCommand } from "./state.ts";
-import type { CommandState, Host, Verdict } from "./types.ts";
+import {
+  applyStaticGate,
+  decide,
+  POLICY_VERSION,
+  THRESHOLDS,
+} from "./policy.ts";
+import { QUESTION_SET_VERSION } from "./questions.ts";
+import { gatherStateEffect, GitCommand, renderState } from "./state.ts";
+import type {
+  CommandState,
+  GuardEvaluation,
+  Host,
+  Verdict,
+} from "./types.ts";
 
 const PREFIX = "demur:";
+
+/**
+ * Effect-native guard implementation with replayable evidence.
+ *
+ * @param command - The shell command the agent wants to run
+ * @param cwd - Absolute working directory for the command
+ * @param agent - Which coding agent is asking
+ * @returns A fail-closed verdict and the exact evidence behind it
+ */
+export const guardEvaluationEffect = Effect.fn("guardEvaluationEffect")(
+  function* (
+    command: string,
+    cwd: string,
+    agent: Host,
+  ): Effect.fn.Return<
+    GuardEvaluation,
+    never,
+    Environment | GitCommand | Judgment
+  > {
+    const started = yield* Clock.monotonicTimeNanos;
+    const core = Effect.gen(function* () {
+      const environment = yield* Environment;
+      const disabled = isDisabled(yield* environment.get("DEMUR_DISABLE"));
+
+      if (disabled) {
+        const verdict = yield* completeVerdict(started, {
+          ...emptyEvidence,
+          decision: "allow",
+          reason: `${PREFIX} disabled via DEMUR_DISABLE.`,
+        });
+        return { verdict, evidence: undefined } satisfies GuardEvaluation;
+      }
+
+      if (command.trim() === "") {
+        const verdict = yield* completeVerdict(started, {
+          ...emptyEvidence,
+          decision: "allow",
+          reason: `${PREFIX} empty command.`,
+        });
+        return { verdict, evidence: undefined } satisfies GuardEvaluation;
+      }
+
+      const state = yield* gatherStateEffect(command, cwd, agent);
+      const verdict = yield* judgeStateCore(state, started, 0);
+      return {
+        verdict,
+        evidence: {
+          modelState: renderState(state),
+          analysis: state.analysis,
+          model: TYPESAFE_MODEL,
+          questionSetVersion: QUESTION_SET_VERSION,
+          policyVersion: POLICY_VERSION,
+          policyThresholds: { ...THRESHOLDS },
+        },
+      } satisfies GuardEvaluation;
+    });
+
+    const exit = yield* Effect.exit(core);
+    if (Exit.isSuccess(exit)) return exit.value;
+
+    return {
+      verdict: yield* unexpectedVerdict(started, exit.cause, 0),
+      evidence: undefined,
+    };
+  },
+);
 
 /**
  * Effect-native guard implementation used by the Promise boundary.
@@ -27,35 +104,8 @@ export const guardEffect = Effect.fn("guardEffect")(function* (
   cwd: string,
   agent: Host,
 ): Effect.fn.Return<Verdict, never, Environment | GitCommand | Judgment> {
-  const started = yield* Clock.monotonicTimeNanos;
-  const core = Effect.gen(function* () {
-    const environment = yield* Environment;
-    const disabled = isDisabled(yield* environment.get("DEMUR_DISABLE"));
-
-    if (disabled) {
-      return yield* completeVerdict(started, {
-        ...emptyEvidence,
-        decision: "allow",
-        reason: `${PREFIX} disabled via DEMUR_DISABLE.`,
-      });
-    }
-
-    if (command.trim() === "") {
-      return yield* completeVerdict(started, {
-        ...emptyEvidence,
-        decision: "allow",
-        reason: `${PREFIX} empty command.`,
-      });
-    }
-
-    const state = yield* gatherStateEffect(command, cwd, agent);
-    return yield* judgeStateCore(state, started, 0);
-  });
-
-  const exit = yield* Effect.exit(core);
-  if (Exit.isSuccess(exit)) return exit.value;
-
-  return yield* unexpectedVerdict(started, exit.cause, 0);
+  const evaluation = yield* guardEvaluationEffect(command, cwd, agent);
+  return evaluation.verdict;
 });
 
 /**

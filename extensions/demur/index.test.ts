@@ -11,6 +11,7 @@ import type {
 import { assert, describe, it } from "@effect/vitest";
 import type { Verdict } from "../../src/types.ts";
 import { estimateInputCostUsd } from "./cost-tracker.ts";
+import { loadTrainingRecords } from "./training-store.ts";
 import {
   getDemurConfigPath,
   loadDemurSettings,
@@ -218,6 +219,47 @@ describe("Pi extension", () => {
       undefined,
     );
   });
+
+  it("keeps training capture separate from the worker verdict", async () => {
+    const stateDirectory = await mkdtemp(join(tmpdir(), "demur-training-worker-"));
+    const previousStateDirectory = process.env.DEMUR_STATE_HOME;
+    const previousDisable = process.env.DEMUR_DISABLE;
+    process.env.DEMUR_STATE_HOME = stateDirectory;
+    process.env.DEMUR_DISABLE = "1";
+    const context = createContext(true, true);
+
+    try {
+      const result = await handleToolCall(
+        {
+          toolName: "bash",
+          toolCallId: "training-worker-test",
+          input: { command: "printf ok" },
+        } as ToolCallEvent,
+        context.ctx,
+        { mode: "passive", training: true, failurePolicy: "block" },
+      );
+
+      assert.strictEqual(result, undefined);
+      const records = await loadTrainingRecords();
+      assert.strictEqual(records.length, 1);
+      assert.strictEqual(records[0]?.version, 2);
+      assert.strictEqual(records[0]?.verdict.decision, "allow");
+      if (records[0]?.version === 2) {
+        assert.strictEqual(records[0].evidence, undefined);
+      }
+    } finally {
+      if (previousStateDirectory === undefined) {
+        delete process.env.DEMUR_STATE_HOME;
+      } else {
+        process.env.DEMUR_STATE_HOME = previousStateDirectory;
+      }
+      if (previousDisable === undefined) {
+        delete process.env.DEMUR_DISABLE;
+      } else {
+        process.env.DEMUR_DISABLE = previousDisable;
+      }
+    }
+  }, 30_000);
 
   it("reports passive verdicts without prompting or blocking", () => {
     const context = createContext(true, false);

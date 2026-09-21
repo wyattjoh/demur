@@ -39,6 +39,7 @@
     "src/questions.ts",
     "src/state.ts",
     "src/settings-model.ts",
+    "src/training-evaluation.ts",
     "src/training-review-model.ts",
     "src/training-review-tui.tsx",
     "src/types.ts"

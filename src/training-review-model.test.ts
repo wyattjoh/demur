@@ -126,12 +126,14 @@ describe("training review model", () => {
       createTrainingReviewInput(
         record,
         "allow",
+        undefined,
         "  verified read-only operation  ",
       ),
       {
         recordId: "record-1",
         originalDecision: "allow",
         expectedDecision: "allow",
+        correctionReason: undefined,
         note: "verified read-only operation",
       },
     );
@@ -139,12 +141,14 @@ describe("training review model", () => {
       createTrainingReviewInput(
         record,
         "deny",
+        "recoverability",
         "  would destroy unpushed work  ",
       ),
       {
         recordId: "record-1",
         originalDecision: "allow",
         expectedDecision: "deny",
+        correctionReason: "recoverability",
         note: "would destroy unpushed work",
       },
     );

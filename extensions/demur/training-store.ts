@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile, rmdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { Decision, Verdict } from "../../src/types.ts";
+import type {
+  Decision,
+  GuardEvidence,
+  Verdict,
+} from "../../src/types.ts";
 import { getDemurStateDirectory } from "./paths.ts";
 
 const LOCK_RETRY_MS = 10;
@@ -19,9 +23,9 @@ export type TrainingMode = "enforce" | "passive";
 export type TrainingHostAction = "allow" | "block";
 
 /**
- * Complete evidence captured for one training-mode command evaluation.
+ * Legacy training record captured before replayable invocation evidence existed.
  */
-export type TrainingRecord = {
+export type TrainingRecordV1 = {
   version: 1;
   id: string;
   recordedAt: string;
@@ -33,9 +37,60 @@ export type TrainingRecord = {
 };
 
 /**
- * Human review of one captured training evaluation.
+ * Training record with exact model state and policy provenance.
  */
-export type TrainingReview = {
+export type TrainingRecordV2 = {
+  version: 2;
+  id: string;
+  recordedAt: string;
+  command: string;
+  cwd: string;
+  mode: TrainingMode;
+  verdict: Verdict;
+  evidence: GuardEvidence | undefined;
+  hostAction: TrainingHostAction;
+};
+
+/**
+ * Complete evidence captured for one training-mode command evaluation.
+ */
+export type TrainingRecord = TrainingRecordV1 | TrainingRecordV2;
+
+/**
+ * Machine-readable explanation for why a human corrected a verdict.
+ */
+export type TrainingCorrectionReason =
+  | "inert-or-read-only"
+  | "sensitive-data"
+  | "security-boundary"
+  | "recoverability"
+  | "shared-infrastructure"
+  | "blast-radius"
+  | "static-uncertainty"
+  | "missing-context"
+  | "service-failure";
+
+/**
+ * Stable correction-reason values accepted by storage and CLI boundaries.
+ */
+export const TRAINING_CORRECTION_REASONS: ReadonlyArray<
+  TrainingCorrectionReason
+> = [
+  "inert-or-read-only",
+  "sensitive-data",
+  "security-boundary",
+  "recoverability",
+  "shared-infrastructure",
+  "blast-radius",
+  "static-uncertainty",
+  "missing-context",
+  "service-failure",
+];
+
+/**
+ * Legacy human review recorded before structured correction reasons existed.
+ */
+export type TrainingReviewV1 = {
   version: 1;
   recordId: string;
   reviewedAt: string;
@@ -45,14 +100,41 @@ export type TrainingReview = {
 };
 
 /**
+ * Human review with a structured reason for corrected model decisions.
+ */
+export type TrainingReviewV2 = {
+  version: 2;
+  recordId: string;
+  reviewedAt: string;
+  originalDecision: Decision;
+  expectedDecision: Decision;
+  correctionReason: TrainingCorrectionReason | undefined;
+  note: string | undefined;
+};
+
+/**
+ * Human review of one captured training evaluation.
+ */
+export type TrainingReview = TrainingReviewV1 | TrainingReviewV2;
+
+/**
  * Input required to append a human review.
  */
 export type TrainingReviewInput = {
   recordId: string;
   originalDecision: Decision;
   expectedDecision: Decision;
+  correctionReason: TrainingCorrectionReason | undefined;
   note: string | undefined;
 };
+
+/**
+ * Input required to append a replayable training evaluation.
+ */
+export type TrainingRecordInput = Omit<
+  TrainingRecordV2,
+  "version" | "id" | "recordedAt"
+>;
 
 /**
  * Resolve the global training-record file according to demur and XDG overrides.
@@ -96,11 +178,11 @@ export function getTrainingReviewPath(
  * @returns The persisted record with generated identity and timestamp
  */
 export async function recordTrainingEvaluation(
-  input: Omit<TrainingRecord, "version" | "id" | "recordedAt">,
+  input: TrainingRecordInput,
   logPath: string = getTrainingLogPath(),
-): Promise<TrainingRecord> {
-  const record: TrainingRecord = {
-    version: 1,
+): Promise<TrainingRecordV2> {
+  const record: TrainingRecordV2 = {
+    version: 2,
     id: randomUUID(),
     recordedAt: new Date().toISOString(),
     ...input,
@@ -131,9 +213,22 @@ export async function loadTrainingRecords(
 export async function recordTrainingReview(
   input: TrainingReviewInput,
   reviewPath: string = getTrainingReviewPath(),
-): Promise<TrainingReview> {
-  const review: TrainingReview = {
-    version: 1,
+): Promise<TrainingReviewV2> {
+  if (
+    input.originalDecision !== input.expectedDecision &&
+    input.correctionReason === undefined
+  ) {
+    throw new Error("corrected training reviews require a correction reason");
+  }
+  if (
+    input.originalDecision === input.expectedDecision &&
+    input.correctionReason !== undefined
+  ) {
+    throw new Error("accepted training reviews cannot have a correction reason");
+  }
+
+  const review: TrainingReviewV2 = {
+    version: 2,
     reviewedAt: new Date().toISOString(),
     ...input,
   };
@@ -213,41 +308,37 @@ function parseTrainingRecord(
 
   const record = value as Record<string, unknown>;
   if (
-    record.version !== 1 ||
+    (record.version !== 1 && record.version !== 2) ||
     typeof record.id !== "string" ||
     typeof record.recordedAt !== "string" ||
     typeof record.command !== "string" ||
     typeof record.cwd !== "string" ||
     (record.mode !== "enforce" && record.mode !== "passive") ||
     (record.hostAction !== "allow" && record.hostAction !== "block") ||
-    !isVerdict(record.verdict)
+    !isVerdict(record.verdict) ||
+    (record.version === 2 && !isGuardEvidence(record.evidence))
   ) {
     throw invalidRecord(path, line);
   }
 
-  const verdict = record.verdict as Record<string, unknown>;
-  return {
-    version: 1,
+  const verdict = normalizeVerdict(record.verdict);
+  const common = {
     id: record.id,
     recordedAt: record.recordedAt,
     command: record.command,
     cwd: record.cwd,
     mode: record.mode,
-    verdict: {
-      decision: verdict.decision as Decision,
-      reason: verdict.reason as string,
-      judgments: verdict.judgments === null
-        ? undefined
-        : verdict.judgments as Verdict["judgments"],
-      failure: verdict.failure === null
-        ? undefined
-        : verdict.failure as Verdict["failure"],
-      latencyMs: verdict.latencyMs as number,
-      usage: verdict.usage === null
-        ? undefined
-        : verdict.usage as Verdict["usage"],
-    },
+    verdict,
     hostAction: record.hostAction,
+  } as const;
+
+  if (record.version === 1) return { version: 1, ...common };
+  return {
+    version: 2,
+    ...common,
+    evidence: record.evidence === null
+      ? undefined
+      : normalizeGuardEvidence(record.evidence),
   };
 }
 
@@ -262,25 +353,55 @@ function parseTrainingReview(
 
   const review = value as Record<string, unknown>;
   if (
-    review.version !== 1 ||
+    (review.version !== 1 && review.version !== 2) ||
     typeof review.recordId !== "string" ||
     typeof review.reviewedAt !== "string" ||
     !isDecision(review.originalDecision) ||
     !isDecision(review.expectedDecision) ||
     (review.note !== undefined &&
       review.note !== null &&
-      typeof review.note !== "string")
+      typeof review.note !== "string") ||
+    (review.version === 2 &&
+      (!isReviewCorrectionReasonValid(review) ||
+        (review.correctionReason !== undefined &&
+          review.correctionReason !== null &&
+          !isTrainingCorrectionReason(review.correctionReason))))
   ) {
     throw invalidRecord(path, line);
   }
 
-  return {
-    version: 1,
+  const common = {
     recordId: review.recordId,
     reviewedAt: review.reviewedAt,
     originalDecision: review.originalDecision,
     expectedDecision: review.expectedDecision,
     note: review.note === null ? undefined : review.note,
+  } as const;
+  if (review.version === 1) return { version: 1, ...common };
+  return {
+    version: 2,
+    ...common,
+    correctionReason: review.correctionReason === null
+      ? undefined
+      : review.correctionReason as TrainingCorrectionReason | undefined,
+  };
+}
+
+function normalizeVerdict(value: unknown): Verdict {
+  const verdict = value as Record<string, unknown>;
+  return {
+    decision: verdict.decision as Decision,
+    reason: verdict.reason as string,
+    judgments: verdict.judgments === null
+      ? undefined
+      : verdict.judgments as Verdict["judgments"],
+    failure: verdict.failure === null
+      ? undefined
+      : verdict.failure as Verdict["failure"],
+    latencyMs: verdict.latencyMs as number,
+    usage: verdict.usage === null
+      ? undefined
+      : verdict.usage as Verdict["usage"],
   };
 }
 
@@ -294,6 +415,63 @@ function isVerdict(value: unknown): value is Verdict {
 
 function isDecision(value: unknown): value is Decision {
   return value === "allow" || value === "ask" || value === "deny";
+}
+
+function isReviewCorrectionReasonValid(
+  review: Record<string, unknown>,
+): boolean {
+  const corrected = review.originalDecision !== review.expectedDecision;
+  const hasReason = review.correctionReason !== undefined &&
+    review.correctionReason !== null;
+  return corrected === hasReason;
+}
+
+/**
+ * Check whether a value is a supported structured correction reason.
+ *
+ * @param value - Candidate correction-reason value
+ * @returns Whether the value belongs to the stable correction taxonomy
+ */
+export function isTrainingCorrectionReason(
+  value: unknown,
+): value is TrainingCorrectionReason {
+  return typeof value === "string" &&
+    TRAINING_CORRECTION_REASONS.includes(value as TrainingCorrectionReason);
+}
+
+function isGuardEvidence(value: unknown): boolean {
+  if (value === null || value === undefined) return true;
+  if (typeof value !== "object") return false;
+  const evidence = value as Record<string, unknown>;
+  return evidence.modelState !== null &&
+    typeof evidence.modelState === "object" &&
+    (evidence.analysis === null || evidence.analysis === undefined ||
+      typeof evidence.analysis === "object") &&
+    typeof evidence.model === "string" &&
+    Number.isInteger(evidence.questionSetVersion) &&
+    Number.isInteger(evidence.policyVersion) &&
+    isNumberRecord(evidence.policyThresholds);
+}
+
+function normalizeGuardEvidence(value: unknown): GuardEvidence {
+  const evidence = value as Record<string, unknown>;
+  return {
+    modelState: evidence.modelState as GuardEvidence["modelState"],
+    analysis: evidence.analysis === null
+      ? undefined
+      : evidence.analysis as GuardEvidence["analysis"],
+    model: evidence.model as string,
+    questionSetVersion: evidence.questionSetVersion as number,
+    policyVersion: evidence.policyVersion as number,
+    policyThresholds: evidence.policyThresholds as GuardEvidence["policyThresholds"],
+  };
+}
+
+function isNumberRecord(value: unknown): boolean {
+  if (value === null || typeof value !== "object") return false;
+  return Object.values(value).every((entry) =>
+    typeof entry === "number" && Number.isFinite(entry)
+  );
 }
 
 function invalidRecord(path: string, line: number): Error {

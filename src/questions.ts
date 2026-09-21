@@ -2,6 +2,14 @@ import { Schema } from "effect";
 import { Decision } from "effect/unstable/ai";
 
 /**
+ * Version of the complete TypeSafe question set.
+ *
+ * Increment this whenever question instructions, criteria, or primitives change
+ * so captured training evidence remains attributable to its exact semantics.
+ */
+export const QUESTION_SET_VERSION = 2;
+
+/**
  * The judgment set demur asks about every command.
  *
  * All six are sent in a single System One call. They are independent of one
@@ -35,7 +43,7 @@ export const QUESTIONS = {
     criteria: {
       true: "It reads a value from an environment variable, file, credential or secret store, database, or remote system and prints, logs, copies, or transmits it. Read-only output still counts.",
       false:
-        "It reveals only names, metadata, schema, attributes, or redacted values; rotates or revokes without revealing; or quotes or prints secret-looking names or commands as documentation, comments, or other inert payload.",
+        "It reveals only names, metadata, schema, attributes, or redacted values; looks up or describes a credential item without requesting its secret value; rotates or revokes without revealing; or quotes or prints secret-looking names or commands as documentation, comments, or other inert payload. For example, `security find-generic-password -s NAME` without `-w` prints item attributes rather than the password value.",
     },
   }),
 
