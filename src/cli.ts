@@ -1,5 +1,14 @@
 #!/usr/bin/env bun
+import { createInterface } from "node:readline/promises";
 import { Predicate } from "effect";
+import {
+  loadTrainingRecords,
+  loadTrainingReviews,
+  recordTrainingReview,
+  type TrainingRecord,
+  type TrainingReview,
+  type TrainingReviewInput,
+} from "../extensions/demur/training-store.ts";
 import { guard } from "./guard.ts";
 import {
   deleteApiKey,
@@ -7,12 +16,20 @@ import {
   storeApiKey,
   type ResolvedApiKey,
 } from "./key.ts";
+import {
+  buildTrainingReviewEntries,
+  getTrainingReviewFilter,
+  type TrainingReviewSnapshot,
+} from "./training-review-model.ts";
+import type { TrainingReviewTuiResult } from "./training-review-tui.tsx";
 import type { Verdict } from "./types.ts";
 
 const USAGE = `Usage:
+  demur
   demur auth login
   demur auth status
   demur auth logout
+  demur training review [--plain]
   demur judge "<command>" [--cwd=<path>]`;
 
 /**
@@ -23,18 +40,46 @@ export type CliDependencies = {
   resolveApiKey(): Promise<ResolvedApiKey | undefined>;
   storeApiKey(value: string): Promise<void>;
   deleteApiKey(): Promise<boolean>;
+  loadTrainingRecords(): Promise<ReadonlyArray<TrainingRecord>>;
+  loadTrainingReviews(): Promise<ReadonlyArray<TrainingReview>>;
+  recordTrainingReview(input: TrainingReviewInput): Promise<TrainingReview>;
+  runTrainingReviewTui(
+    snapshot: TrainingReviewSnapshot,
+    reloadSnapshot: () => Promise<TrainingReviewSnapshot>,
+    recordReview: (input: TrainingReviewInput) => Promise<TrainingReview>,
+  ): Promise<TrainingReviewTuiResult>;
+  isInteractive(): boolean;
   readSecret(prompt: string): Promise<string>;
+  readLine(prompt: string): Promise<string>;
   cwd(): string;
   stdout(message: string): void;
   stderr(message: string): void;
 };
+
+let lineInput:
+  | {
+    terminal: ReturnType<typeof createInterface>;
+    lines: AsyncIterator<string>;
+  }
+  | undefined;
 
 const defaultDependencies: CliDependencies = {
   judge: (command, cwd) => guard(command, cwd, "cli"),
   resolveApiKey,
   storeApiKey,
   deleteApiKey,
+  loadTrainingRecords,
+  loadTrainingReviews,
+  recordTrainingReview,
+  runTrainingReviewTui: async (snapshot, reloadSnapshot, recordReview) => {
+    const { runTrainingReviewTui } = await import(
+      "./training-review-tui.tsx"
+    );
+    return runTrainingReviewTui(snapshot, reloadSnapshot, recordReview);
+  },
+  isInteractive: () => Boolean(process.stdin.isTTY && process.stdout.isTTY),
   readSecret,
+  readLine,
   cwd: () => process.cwd(),
   stdout: (message) => console.log(message),
   stderr: (message) => console.error(message),
@@ -52,8 +97,22 @@ export async function runCli(
   dependencies: CliDependencies = defaultDependencies,
 ): Promise<number> {
   try {
+    if (args.length === 0) {
+      if (!dependencies.isInteractive()) {
+        dependencies.stderr(
+          "demur: the interactive app requires a terminal; use `demur training review --plain` for line-oriented review.",
+        );
+        return 2;
+      }
+      return await runTraining(["review"], dependencies);
+    }
+
     if (args[0] === "auth") {
       return await runAuth(args.slice(1), dependencies);
+    }
+
+    if (args[0] === "training") {
+      return await runTraining(args.slice(1), dependencies);
     }
 
     if (args[0] === "help" || args[0] === "--help" || args[0] === "-h") {
@@ -66,6 +125,8 @@ export async function runCli(
   } catch (error: unknown) {
     dependencies.stderr(`demur: ${errorDetail(error)}`);
     return 1;
+  } finally {
+    closeLineInput();
   }
 }
 
@@ -136,6 +197,157 @@ async function runAuth(
   return 2;
 }
 
+async function runTraining(
+  args: ReadonlyArray<string>,
+  dependencies: CliDependencies,
+): Promise<number> {
+  const plain = args.includes("--plain");
+  const operands = args.filter((arg) => arg !== "--plain");
+  if (
+    operands.length !== 1 ||
+    operands[0] !== "review" ||
+    args.filter((arg) => arg === "--plain").length > 1
+  ) {
+    dependencies.stderr(USAGE);
+    return 2;
+  }
+
+  const loadSnapshot = () => loadTrainingReviewSnapshot(dependencies);
+  const snapshot = await loadSnapshot();
+
+  if (!plain && dependencies.isInteractive()) {
+    const result = await dependencies.runTrainingReviewTui(
+      snapshot,
+      loadSnapshot,
+      dependencies.recordTrainingReview,
+    );
+    printReviewSummary(result, dependencies);
+    return 0;
+  }
+
+  const pending = buildTrainingReviewEntries(snapshot)
+    .filter((entry) => getTrainingReviewFilter(entry) === "unreviewed")
+    .map((entry) => entry.record);
+  if (pending.length === 0) {
+    dependencies.stdout("No unreviewed demur training records.");
+    return 0;
+  }
+
+  return runPlainTrainingReview(pending, dependencies);
+}
+
+async function loadTrainingReviewSnapshot(
+  dependencies: CliDependencies,
+): Promise<TrainingReviewSnapshot> {
+  const [records, reviews] = await Promise.all([
+    dependencies.loadTrainingRecords(),
+    dependencies.loadTrainingReviews(),
+  ]);
+  return { records, reviews };
+}
+
+async function runPlainTrainingReview(
+  pending: ReadonlyArray<TrainingRecord>,
+  dependencies: CliDependencies,
+): Promise<number> {
+  let reviewed = 0;
+  let corrected = 0;
+  let skipped = 0;
+  for (const [index, record] of pending.entries()) {
+    printTrainingRecord(record, index + 1, pending.length, dependencies);
+    const expectedDecision = await readExpectedDecision(record, dependencies);
+    if (expectedDecision === "quit") break;
+    if (expectedDecision === "skip") {
+      skipped += 1;
+      continue;
+    }
+
+    const isCorrection = expectedDecision !== record.verdict.decision;
+    const note = isCorrection
+      ? (await dependencies.readLine("Correction note (optional): ")).trim() ||
+        undefined
+      : undefined;
+    await dependencies.recordTrainingReview({
+      recordId: record.id,
+      originalDecision: record.verdict.decision,
+      expectedDecision,
+      note,
+    });
+    reviewed += 1;
+    if (isCorrection) corrected += 1;
+    dependencies.stdout(
+      isCorrection
+        ? `Recorded correction: ${record.verdict.decision} → ${expectedDecision}.`
+        : `Accepted ${record.verdict.decision} decision.`,
+    );
+  }
+
+  printReviewSummary({ reviewed, corrected, skipped }, dependencies);
+  return 0;
+}
+
+function printReviewSummary(
+  result: TrainingReviewTuiResult,
+  dependencies: CliDependencies,
+): void {
+  const skipped = result.skipped === 0
+    ? "."
+    : `; ${result.skipped} skipped.`;
+  dependencies.stdout(
+    `Reviewed ${result.reviewed} record${result.reviewed === 1 ? "" : "s"}; ${result.corrected} corrected${skipped}`,
+  );
+}
+
+async function readExpectedDecision(
+  record: TrainingRecord,
+  dependencies: CliDependencies,
+): Promise<"allow" | "ask" | "deny" | "skip" | "quit"> {
+  while (true) {
+    const input = (
+      await dependencies.readLine(
+        `Expected decision [enter=${record.verdict.decision}, allow, ask, deny, skip, quit]: `,
+      )
+    ).trim().toLowerCase();
+
+    if (input === "") return record.verdict.decision;
+    if (
+      input === "allow" ||
+      input === "ask" ||
+      input === "deny" ||
+      input === "skip" ||
+      input === "quit"
+    ) {
+      return input;
+    }
+    dependencies.stderr(`Unknown review choice: ${input}`);
+  }
+}
+
+function printTrainingRecord(
+  record: TrainingRecord,
+  index: number,
+  total: number,
+  dependencies: CliDependencies,
+): void {
+  dependencies.stdout("");
+  dependencies.stdout(
+    `[${index}/${total}] ${record.recordedAt} · ${record.mode} · host ${record.hostAction}`,
+  );
+  dependencies.stdout(`cwd: ${record.cwd}`);
+  dependencies.stdout(`command: ${record.command}`);
+  dependencies.stdout(
+    `verdict: ${record.verdict.decision.toUpperCase()} — ${record.verdict.reason}`,
+  );
+  if (record.verdict.judgments !== undefined) {
+    dependencies.stdout(
+      `judgments: ${JSON.stringify(record.verdict.judgments)}`,
+    );
+  }
+  if (record.verdict.failure !== undefined) {
+    dependencies.stdout(`failure: ${record.verdict.failure}`);
+  }
+}
+
 async function runJudge(
   args: ReadonlyArray<string>,
   dependencies: CliDependencies,
@@ -184,6 +396,26 @@ async function runJudge(
     `  ${verdict.latencyMs}ms${verdict.usage ? `, ${verdict.usage.inputTokens} in / ${verdict.usage.outputTokens} out tokens` : ""}`,
   );
   return 0;
+}
+
+async function readLine(prompt: string): Promise<string> {
+  if (lineInput === undefined) {
+    const terminal = createInterface({ input: process.stdin });
+    lineInput = {
+      terminal,
+      lines: terminal[Symbol.asyncIterator](),
+    };
+  }
+
+  process.stderr.write(prompt);
+  const next = await lineInput.lines.next();
+  if (next.done) throw new Error("training review input ended");
+  return next.value;
+}
+
+function closeLineInput(): void {
+  lineInput?.terminal.close();
+  lineInput = undefined;
 }
 
 async function readSecret(prompt: string): Promise<string> {

@@ -5,12 +5,23 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   getDemurConfigPath,
   loadDemurSettings,
+  parseDemurMode,
   parseFailurePolicy,
   saveDemurSettings,
 } from "./settings.ts";
 
 describe("Pi settings configuration", () => {
   it("resolves the XDG config path with a home-directory fallback", () => {
+    assert.strictEqual(
+      getDemurConfigPath(
+        {
+          DEMUR_CONFIG_HOME: "/isolated/demur-config",
+          XDG_CONFIG_HOME: "/config",
+        },
+        "/home/test",
+      ),
+      "/isolated/demur-config/config.json",
+    );
     assert.strictEqual(
       getDemurConfigPath(
         { XDG_CONFIG_HOME: "/config" },
@@ -29,20 +40,23 @@ describe("Pi settings configuration", () => {
     const configPath = join(directory, "nested", "config.json");
 
     assert.deepEqual(await loadDemurSettings(configPath), {
-      enabled: true,
+      mode: "enforce",
+      training: false,
       failurePolicy: "block",
     });
     await saveDemurSettings(
-      { enabled: false, failurePolicy: "ask" },
+      { mode: "passive", training: true, failurePolicy: "ask" },
       configPath,
     );
     assert.deepEqual(await loadDemurSettings(configPath), {
-      enabled: false,
+      mode: "passive",
+      training: true,
       failurePolicy: "ask",
     });
     assert.deepEqual(JSON.parse(await readFile(configPath, "utf8")), {
-      version: 1,
-      enabled: false,
+      version: 2,
+      mode: "passive",
+      training: true,
       failurePolicy: "ask",
     });
   });
@@ -57,7 +71,8 @@ describe("Pi settings configuration", () => {
     );
 
     assert.deepEqual(await loadDemurSettings(configPath), {
-      enabled: true,
+      mode: "enforce",
+      training: false,
       failurePolicy: "allow",
     });
   });
@@ -67,7 +82,12 @@ describe("Pi settings configuration", () => {
     const configPath = join(directory, "config.json");
     await writeFile(
       configPath,
-      JSON.stringify({ version: 1, failurePolicy: "deny" }),
+      JSON.stringify({
+        version: 2,
+        mode: "disabled",
+        training: true,
+        failurePolicy: "block",
+      }),
       "utf8",
     );
 
@@ -82,7 +102,27 @@ describe("Pi settings configuration", () => {
     assert.match(failure.message, /invalid demur config/);
   });
 
+  it("does not persist training while disabled", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "demur-config-"));
+    const configPath = join(directory, "config.json");
+
+    let failure: unknown;
+    try {
+      await saveDemurSettings(
+        { mode: "disabled", training: true, failurePolicy: "block" },
+        configPath,
+      );
+    } catch (error: unknown) {
+      failure = error;
+    }
+
+    assert.instanceOf(failure, Error);
+    assert.include(failure.message, "training cannot be enabled");
+  });
+
   it("parses only supported command arguments", () => {
+    assert.strictEqual(parseDemurMode(" PASSIVE "), "passive");
+    assert.strictEqual(parseDemurMode("enabled"), undefined);
     assert.strictEqual(parseFailurePolicy(" ASK "), "ask");
     assert.strictEqual(parseFailurePolicy("allow"), "allow");
     assert.strictEqual(parseFailurePolicy("deny"), undefined);

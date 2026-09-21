@@ -9,6 +9,7 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { getDemurStateDirectory } from "./paths.ts";
 
 const LOCK_RETRY_MS = 10;
 const LOCK_TIMEOUT_MS = 5_000;
@@ -31,9 +32,9 @@ export type CostTotals = {
 };
 
 /**
- * Resolve the global demur usage file according to the XDG state convention.
+ * Resolve the global demur usage file using demur-specific and XDG conventions.
  *
- * @param environment - Process environment used to resolve `XDG_STATE_HOME`
+ * @param environment - Process environment used to resolve demur and XDG overrides
  * @param homeDirectory - Home directory used when the XDG override is absent
  * @returns Absolute path to demur's usage state file
  */
@@ -41,8 +42,10 @@ export function getCostStatePath(
   environment: NodeJS.ProcessEnv = process.env,
   homeDirectory: string = homedir(),
 ): string {
-  const stateDirectory = environment.XDG_STATE_HOME || join(homeDirectory, ".local", "state");
-  return join(stateDirectory, "demur", "usage.json");
+  return join(
+    getDemurStateDirectory(environment, homeDirectory),
+    "usage.json",
+  );
 }
 
 /**

@@ -48,6 +48,12 @@ or sensitive names. Review TypeSafe's service terms and data-handling policy
 before enabling demur in a sensitive repository. Do not run secrets directly in
 shell arguments when the guard is active.
 
+Pi training capture stores the complete command, working directory, operating
+mode, full verdict and judgments, and resulting host action locally. These
+records can therefore contain secrets or sensitive names from shell arguments
+and paths. Training capture is off by default and is unavailable while the Pi
+integration is disabled.
+
 ## Requirements
 
 - [Bun](https://bun.sh/) 1.4 or newer
@@ -109,23 +115,34 @@ command request and resulting verdict cross its local stdio pipes. `ask` opens
 an interactive confirmation dialog; without an interactive UI, demur blocks the
 command.
 
-Use `/demur` to open the extension menu. It can enable or disable demur and
-change what Pi does when demur cannot obtain a trustworthy judgment because of
-a missing credential, timeout, API error, malformed worker response, or
-unexpected guard failure:
+Use `/demur` to open the extension menu. Its global operating mode is:
+
+- `enforce` (default) applies `allow`, `ask`, and `deny` decisions normally.
+- `passive` still judges every Bash call and prints the diagnostic, but never
+  prompts or blocks because of the verdict.
+- `disabled` bypasses the worker and allows Bash calls without judgment.
+
+Training capture can be enabled independently in `enforce` or `passive` mode.
+It is automatically turned off when the integration is disabled. Pi's bottom
+status bar always shows the current mode and whether training is active so every
+bypass or local recording state remains visible.
+
+The menu also controls what enforce mode does when demur cannot obtain a
+trustworthy judgment because of a missing credential, timeout, API error,
+malformed worker response, or unexpected guard failure:
 
 - `block` (default) fails closed.
 - `ask` requests interactive confirmation and blocks when no UI is available.
 - `allow` fails open without confirmation.
 
-Disabling demur bypasses the worker and allows Bash calls without judgment. Pi's
-bottom status bar always shows `demur: enabled` or `demur: disabled` so this
-bypass remains visible.
-
-Both settings are stored globally at `$XDG_CONFIG_HOME/demur/config.json`, or
+Settings are stored globally at `$XDG_CONFIG_HOME/demur/config.json`, or
 `~/.config/demur/config.json` when `XDG_CONFIG_HOME` is unset, and apply to
-future Pi sessions. While demur is enabled, the failure policy never changes a
-completed `deny` policy judgment; those commands remain blocked.
+future Pi sessions. Set `DEMUR_CONFIG_HOME` to use an isolated demur directory;
+`config.json` is read and written directly beneath it. This demur-specific
+override takes precedence over the XDG and home-directory locations. While
+demur is enforcing, the failure policy never changes a completed `deny` policy
+judgment; those commands remain blocked. Passive mode reports failures but does
+not apply the failure policy because it never blocks.
 
 After each run, Pi's interactive UI prints the decision, submitted input-token
 count, the run's estimated input cost, the accumulated global estimate, and the
@@ -141,6 +158,16 @@ serializes concurrent Pi instances, and each update is written to a temporary
 file before an atomic rename so the total cannot be partially written or lose a
 concurrent increment. Cost-accounting failures do not change demur's guard
 decision; the status reports `accumulated unavailable` instead.
+
+Training evaluations are appended as private, versioned JSONL records at
+`$XDG_STATE_HOME/demur/training.jsonl`, with the same home-directory fallback.
+Set `DEMUR_STATE_HOME` to place `usage.json`, `training.jsonl`, and
+`training-reviews.jsonl` directly beneath an isolated directory instead. This
+demur-specific override takes precedence over the XDG and home-directory
+locations. Training records are retained until the user removes them. Human
+reviews are appended separately; accepted and corrected records are linked by a
+stable record ID, leaving the original evidence unchanged. A training-write
+failure is reported but never changes whether the command runs.
 
 Pi packages execute with the user's full system permissions. Review this
 repository before installing it.
@@ -182,15 +209,40 @@ Claude Code's `hookSpecificOutput.permissionDecision` response.
 
 ### CLI
 
-Manage the stored credential or judge a single command without a host
-integration:
+Launch the central interface, manage the stored credential, or judge a single
+command without a host integration:
 
 ```sh
+demur
 demur auth login
 demur auth status
 demur auth logout
+demur training review
+# Force the line-oriented interface for pipes or basic terminals:
+demur training review --plain
 demur judge "git reset --hard HEAD~3"
 ```
+
+Bare `demur` opens the central OpenTUI interface when stdin and stdout are
+interactive. `demur training review` remains an explicit alias for the same
+interface. It starts in an `all` view; Tab and Shift-Tab rotate between
+`all`, `not reviewed`, `approved` (`allow`), `ask`, and `deny` views. The queue
+is focused initially: arrow keys navigate it, Up from its first result focuses a
+fuzzy working-directory filter, and another Up focuses the tab strip. Left and
+Right select adjacent focused tabs, while Down returns through the filter to the
+queue. Right from the queue focuses the scrollable detail pane.
+The detail pane supports arrows or `j`/`k`; Left returns to the queue. Page Up
+and Page Down page within the focused pane, and queue navigation stops at its
+first and last entries. Mouse clicks select tabs, records, the filter, or either
+pane; the wheel scrolls the queue and detail pane. Enter selects the original
+decision, `1`/`2`/`3` choose `allow`/`ask`/`deny`, `s`
+leaves a record for a later pass, and `q` or Escape stops. Previously reviewed
+records remain available, and changing an answer appends a review revision while
+preserving its visible history. The TUI remains open when a view is empty and
+polls training state for newly captured or externally reviewed evaluations.
+Non-interactive invocations automatically use the line-oriented reviewer; pass
+`--plain` to select it explicitly. Reviews remain separate from the original
+evidence so they can later be curated into independently licensed eval fixtures.
 
 From a development checkout, `bun run judge "<command>"` remains available.
 
@@ -200,6 +252,8 @@ From a development checkout, `bun run judge "<command>"` remains available.
 | --- | --- | --- |
 | `TYPESAFE_API_KEY` | stored credential | Optional TypeSafe API credential override. Missing keys fail closed. |
 | `DEMUR_TIMEOUT_MS` | `4000` | Per-attempt model timeout in milliseconds. |
+| `DEMUR_CONFIG_HOME` | XDG/home config | Demur-specific directory containing `config.json`. |
+| `DEMUR_STATE_HOME` | XDG/home state | Demur-specific directory containing usage and training state. |
 | `DEMUR_DISABLE` | unset | Emergency bypass. `1` or `true` allows every command. |
 
 ## Failure posture
@@ -209,12 +263,12 @@ timeout, API failure, malformed response, or unexpected guard error returns
 `deny` with a reason that identifies the guard failure rather than presenting it
 as a policy judgment. The Claude Code adapter and CLI preserve that verdict.
 
-The Pi extension defaults to enabled with the same fail-closed behavior, but
-its explicit `/demur` menu can globally change how Pi handles guard failures or
-disable the extension entirely. The failure-policy override applies only when
-no trustworthy judgment was produced; it cannot loosen a completed policy
-denial while demur is enabled. The bottom status bar makes the enabled state
-visible.
+The Pi extension defaults to enforce mode with the same fail-closed behavior,
+but its explicit `/demur` menu can globally select enforce, passive, or disabled
+mode. The failure-policy override applies only in enforce mode when no
+trustworthy judgment was produced; it cannot loosen a completed policy denial.
+Passive mode always continues after reporting the underlying verdict, while the
+bottom status bar keeps the active mode and training state visible.
 
 `DEMUR_DISABLE=1` remains the cross-host emergency bypass. It disables judgment
 and protection entirely and should remain unset during normal use.
@@ -248,7 +302,9 @@ and deterministic policy controls alongside demur.
 - `src/key.ts` — environment precedence and operating-system credential storage
 - `src/guard.internal.ts` — Effect-native orchestration and fail-closed recovery
 - `src/guard.ts` — managed runtime and Promise boundary
-- `extensions/demur/` — Pi `tool_call` integration
+- `src/training-review-model.ts` — historical review status and cwd filtering
+- `src/training-review-tui.tsx` — interactive OpenTUI training-review queue
+- `extensions/demur/` — Pi `tool_call` integration and training-state storage
 - `src/adapters/claude-code.ts` — Claude Code `PreToolUse` integration
 - `eval/` — safe synthetic contrast cases and the live evaluation runner
 

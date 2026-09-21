@@ -12,7 +12,9 @@ System One. Read README.md for setup, data disclosure, and limitations.
 - `src/key.ts` — environment precedence and `Bun.secrets` credential storage.
 - `src/guard.internal.ts` — Effect-native orchestration and fail-closed posture.
 - `src/guard.ts` — managed runtime and Promise compatibility boundary.
-- `extensions/demur/` — Node-compatible Pi extension and atomic global cost tracker.
+- `extensions/demur/` — Node-compatible Pi extension, atomic global cost tracker, and append-only training store.
+- `src/training-review-model.ts` — pure historical review status and cwd-filtering model.
+- `src/training-review-tui.tsx` — live OpenTUI queue/detail reviewer; the CLI retains a plain non-TTY fallback.
 - `src/adapters/pi-worker.ts` — Bun guard worker launched by the Pi extension.
 - `src/adapters/claude-code.ts` — Claude Code `PreToolUse` hook.
 - `eval/` — synthetic contrast corpus, pure scoring, and live runner.
@@ -71,11 +73,23 @@ those effects were requested or permitted.
 
 **Preserve fail-closed defaults.** Missing credentials, timeouts, malformed
 responses, and unexpected errors produce a failure verdict that denies the
-command. While enabled, the Pi extension may apply its explicit, globally
+command. In enforce mode, the Pi extension may apply its explicit, globally
 persisted failure policy only when `Verdict.failure` is set or its worker fails;
-it must never loosen a completed policy denial. The Pi `/demur` menu may also
+it must never loosen a completed policy denial. Passive mode may report the
+same verdict without prompting or blocking. The Pi `/demur` menu may also
 persistently disable that host integration, and its bottom-bar status must keep
-that bypass visible. `DEMUR_DISABLE` remains the cross-host emergency bypass.
+passive, training, and disabled states visible. `DEMUR_DISABLE` remains the
+cross-host emergency bypass.
+
+**Keep training evidence append-only.** Training capture is available only in
+enforce and passive modes. Store exact commands, context, verdicts, and host
+actions in private XDG state JSONL; store human reviews separately by stable
+record ID so corrections never rewrite the original evidence. Keep the OpenTUI
+and plain review interfaces on the same storage callbacks and decision model.
+The TUI is a live historical queue: keep it open while a view is empty, poll
+append-only state for new evaluations and reviews, and derive each status from
+the latest review while keeping prior revisions visible. Recording failures
+must be visible but must not change the host action.
 
 ## Static uncertainty gate
 

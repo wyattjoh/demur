@@ -14,13 +14,16 @@ import {
 } from "./cost-tracker.ts";
 import {
   DEFAULT_DEMUR_SETTINGS,
+  DEMUR_MODES,
   FAILURE_POLICIES,
   loadDemurSettings,
+  parseDemurMode,
   parseFailurePolicy,
   saveDemurSettings,
   type DemurSettings,
   type FailurePolicy,
 } from "./settings.ts";
+import { recordTrainingEvaluation } from "./training-store.ts";
 
 const WORKER_PATH = fileURLToPath(
   new URL("../../src/adapters/pi-worker.ts", import.meta.url),
@@ -44,7 +47,7 @@ export async function handleToolCall(
   settings: DemurSettings = DEFAULT_DEMUR_SETTINGS,
 ): Promise<ToolCallEventResult | undefined> {
   if (!isToolCallEventType("bash", event)) return undefined;
-  if (!settings.enabled) return undefined;
+  if (settings.mode === "disabled") return undefined;
 
   const command = event.input.command ?? "";
   if (command.trim() === "") return undefined;
@@ -70,28 +73,45 @@ export async function handleToolCall(
       };
     }
 
-    return handleGuardFailure(
-      `demur: guard worker crashed — ${errorDetail(error)}`,
-      command,
-      ctx,
-      settings.failurePolicy,
-      undefined,
-      undefined,
-      evaluationMs,
-    );
+    verdict = {
+      decision: "deny",
+      reason: `demur: guard worker crashed — ${errorDetail(error)}`,
+      judgments: undefined,
+      failure: "unexpected",
+      latencyMs: evaluationMs,
+      usage: undefined,
+    };
   }
 
   const evaluationMs = performance.now() - evaluationStartedAt;
   const inputTokens = verdict.usage?.inputTokens;
   const accumulatedCostUsd = await recordAccumulatedCost(inputTokens);
-  return resolveVerdict(
-    verdict,
-    command,
-    ctx,
-    settings.failurePolicy,
-    accumulatedCostUsd,
-    evaluationMs,
-  );
+  const result = settings.mode === "passive"
+    ? resolvePassiveVerdict(
+      verdict,
+      ctx,
+      accumulatedCostUsd,
+      evaluationMs,
+    )
+    : await resolveVerdict(
+      verdict,
+      command,
+      ctx,
+      settings.failurePolicy,
+      accumulatedCostUsd,
+      evaluationMs,
+    );
+
+  if (settings.training) {
+    await recordTrainingResult(
+      command,
+      ctx,
+      settings.mode,
+      verdict,
+      result,
+    );
+  }
+  return result;
 }
 
 /**
@@ -183,6 +203,40 @@ export async function resolveVerdict(
   if (approved) return undefined;
 
   return { block: true, reason: `${verdict.reason} Declined by the user.` };
+}
+
+/**
+ * Report a completed verdict without allowing it to affect execution.
+ *
+ * Passive mode never prompts and never returns a block result. Failures remain
+ * visible as failures rather than being mapped through the enforcement-only
+ * failure policy.
+ *
+ * @param verdict - Completed demur guard result
+ * @param ctx - Pi extension context used for notifications
+ * @param accumulatedCostUsd - Persisted global estimate after this run
+ * @param evaluationMs - Wall-clock time spent obtaining the guard verdict
+ * @returns Nothing so Pi continues with the command
+ */
+export function resolvePassiveVerdict(
+  verdict: Verdict,
+  ctx: ExtensionContext,
+  accumulatedCostUsd: number | undefined,
+  evaluationMs: number,
+): undefined {
+  const source = verdict.failure === undefined
+    ? verdict.decision.toUpperCase()
+    : "FAILURE";
+  const result = `PASSIVE: ${source} · NOT ENFORCED`;
+  notifyRun(
+    ctx,
+    result,
+    verdict.usage?.inputTokens,
+    accumulatedCostUsd,
+    evaluationMs,
+    source === "ALLOW" ? "info" : "warning",
+  );
+  return undefined;
 }
 
 /**
@@ -326,14 +380,40 @@ export default function demur(pi: ExtensionAPI): void {
       }
 
       await refreshSettings(ctx);
-      const toggleLabel = settings.enabled ? "Disable demur" : "Enable demur";
+      const modeLabel = `Change mode (current: ${settings.mode})`;
+      const trainingLabel = settings.training
+        ? "Disable training capture"
+        : "Enable training capture";
       const policyLabel = `Change failure policy (current: ${settings.failurePolicy})`;
-      const action = await ctx.ui.select("demur", [toggleLabel, policyLabel]);
+      const actions = settings.mode === "disabled"
+        ? [modeLabel, policyLabel]
+        : [modeLabel, trainingLabel, policyLabel];
+      const action = await ctx.ui.select("demur", actions);
       if (action === undefined) return;
 
-      if (action === toggleLabel) {
+      if (action === modeLabel) {
+        const selection = await ctx.ui.select(
+          `demur mode (current: ${settings.mode})`,
+          [...DEMUR_MODES],
+        );
+        if (selection === undefined) return;
+
+        const mode = parseDemurMode(selection);
+        if (mode === undefined) return;
         await persistSettings(
-          { ...settings, enabled: !settings.enabled },
+          {
+            ...settings,
+            mode,
+            training: mode === "disabled" ? false : settings.training,
+          },
+          ctx,
+        );
+        return;
+      }
+
+      if (action === trainingLabel) {
+        await persistSettings(
+          { ...settings, training: !settings.training },
           ctx,
         );
         return;
@@ -366,7 +446,7 @@ export default function demur(pi: ExtensionAPI): void {
     } catch (error: unknown) {
       settings = { ...DEFAULT_DEMUR_SETTINGS };
       ctx.ui.notify(
-        `Could not load demur settings; using enabled/block: ${errorDetail(error)}`,
+        `Could not load demur settings; using enforce/block with training off: ${errorDetail(error)}`,
         "warning",
       );
     }
@@ -395,14 +475,42 @@ function updateStatus(
   ctx: ExtensionContext,
   settings: DemurSettings,
 ): void {
-  const status = settings.enabled ? "enabled" : "disabled";
-  const color = settings.enabled ? "success" : "warning";
-  ctx.ui.setStatus("demur", ctx.ui.theme.fg(color, `demur: ${status}`));
+  const training = settings.training ? " + training" : "";
+  const color = settings.mode === "enforce" && !settings.training
+    ? "success"
+    : "warning";
+  ctx.ui.setStatus(
+    "demur",
+    ctx.ui.theme.fg(color, `demur: ${settings.mode}${training}`),
+  );
 }
 
 function settingsNotification(settings: DemurSettings): string {
-  const status = settings.enabled ? "enabled" : "disabled";
-  return `demur ${status} globally; failure policy: ${settings.failurePolicy}.`;
+  const training = settings.training ? "on" : "off";
+  return `demur mode: ${settings.mode}; training: ${training}; failure policy: ${settings.failurePolicy}.`;
+}
+
+async function recordTrainingResult(
+  command: string,
+  ctx: ExtensionContext,
+  mode: "enforce" | "passive",
+  verdict: Verdict,
+  result: ToolCallEventResult | undefined,
+): Promise<void> {
+  try {
+    await recordTrainingEvaluation({
+      command,
+      cwd: ctx.cwd,
+      mode,
+      verdict,
+      hostAction: result?.block === true ? "block" : "allow",
+    });
+  } catch (error: unknown) {
+    ctx.ui.notify(
+      `demur: could not record training evaluation — ${errorDetail(error)}`,
+      "warning",
+    );
+  }
 }
 
 async function handleGuardFailure(
@@ -532,15 +640,25 @@ function parseVerdict(output: string): Verdict {
     throw new Error("verdict must be an object");
   }
 
-  const { decision, reason } = value as Record<string, unknown>;
+  const { decision, reason, judgments, failure, latencyMs, usage } =
+    value as Record<string, unknown>;
   if (
     (decision !== "allow" && decision !== "ask" && decision !== "deny") ||
-    typeof reason !== "string"
+    typeof reason !== "string" ||
+    typeof latencyMs !== "number" ||
+    !Number.isFinite(latencyMs)
   ) {
-    throw new Error("verdict must contain a valid decision and reason");
+    throw new Error("verdict must contain a valid decision, reason, and latency");
   }
 
-  return value as Verdict;
+  return {
+    decision,
+    reason,
+    judgments: judgments as Verdict["judgments"],
+    failure: failure as Verdict["failure"],
+    latencyMs,
+    usage: usage as Verdict["usage"],
+  };
 }
 
 function errorDetail(error: unknown): string {

@@ -23,7 +23,9 @@
   ],
   "files": [
     "extensions/demur/cost-tracker.ts",
+    "extensions/demur/paths.ts",
     "extensions/demur/settings.ts",
+    "extensions/demur/training-store.ts",
     "extensions/demur/index.ts",
     "src/adapters/claude-code.ts",
     "src/adapters/pi-worker.ts",
@@ -36,6 +38,8 @@
     "src/policy.ts",
     "src/questions.ts",
     "src/state.ts",
+    "src/training-review-model.ts",
+    "src/training-review-tui.tsx",
     "src/types.ts"
   ],
   "publishConfig": {
@@ -63,12 +67,16 @@
   },
   "dependencies": {
     "@effect/ai-typesafe": "4.0.0-rc.116",
-    "effect": "4.0.0-rc.116"
+    "@opentui/core": "^0.5.11",
+    "@opentui/react": "^0.5.11",
+    "effect": "4.0.0-rc.116",
+    "react": "^19.3.0"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.85.1",
     "@effect/vitest": "4.0.0-rc.116",
     "@types/bun": "1.4.2",
+    "@types/react": "^19.3.0",
     "typescript": "7.0.2",
     "vitest": "5.0.1"
   },

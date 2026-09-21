@@ -15,7 +15,17 @@ const execFilePromise = promisify(execFile);
 const trackerUrl = new URL("./cost-tracker.ts", import.meta.url).href;
 
 describe("Pi cost tracker", () => {
-  it("resolves the global XDG state path", () => {
+  it("resolves the global state path with demur-specific precedence", () => {
+    assert.strictEqual(
+      getCostStatePath(
+        {
+          DEMUR_STATE_HOME: "/isolated/demur-state",
+          XDG_STATE_HOME: "/state",
+        },
+        "/home/test",
+      ),
+      "/isolated/demur-state/usage.json",
+    );
     assert.strictEqual(
       getCostStatePath({ XDG_STATE_HOME: "/state" }, "/home/test"),
       "/state/demur/usage.json",
